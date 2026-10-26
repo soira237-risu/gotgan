@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <cache-path name="shared-preview" path="content-v1/" />
+    <!-- Only exact, explicitly selected files receive temporary URI grants. No prefix grants. -->
+    <external-path name="phone" path="." />
+</paths>

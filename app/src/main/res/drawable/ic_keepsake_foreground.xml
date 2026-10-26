@@ -1,0 +1,12 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group android:scaleX="0.074" android:scaleY="0.074" android:translateX="7.602" android:translateY="8.12">
+        <path android:fillColor="@color/keepsake_ivory" android:pathData="M222,475 Q219,462 238,456 L321,434 Q337,428 349,447 L407,540 L334,582 L304,581 Z" />
+        <path android:fillColor="@color/keepsake_ivory" android:pathData="M849,539 L904,445 Q913,427 931,433 L1017,457 Q1037,463 1028,482 L953,583 L926,582 Z" />
+        <path android:fillColor="@color/keepsake_ivory" android:pathData="M303,581 C483,589 741,582 945,581 L928,895 Q927,916 904,924 C766,940 593,949 447,947 Q422,948 405,935 L328,882 Q310,871 308,849 Z" />
+        <path android:fillColor="@color/keepsake_ivory" android:pathData="M623,462 C623,520 576,568 518,568 C459,568 410,520 410,462 C410,403 459,355 518,355 C577,355 623,403 623,462 Z" />
+        <path android:fillColor="@color/keepsake_ivory" android:pathData="M631,563 L656,317 Q658,288 683,292 L837,304 Q861,306 857,331 L832,556 Z" />
+        <path android:fillColor="@color/keepsake_ink" android:pathData="M379,617 Q379,606 388,606 Q397,607 397,617 L401,899 Q401,911 392,911 Q383,911 383,900 Z" />
+        <path android:fillColor="@color/keepsake_ink" android:pathData="M895,636 L932,587 Q937,579 944,584 Q951,589 946,598 L909,648 Q902,656 896,650 Q890,645 895,636 Z" />
+        <path android:fillColor="@color/keepsake_ink" android:pathData="M523,689 Q517,668 537,666 Q552,664 568,685 Q579,704 625,705 L672,705 Q719,704 737,683 Q754,661 774,668 Q794,672 787,696 C780,738 747,752 692,754 L630,754 C568,753 532,735 523,689 Z" />
+    </group>
+</vector>
