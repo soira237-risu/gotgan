@@ -6,4 +6,10 @@
         <item name="android:windowBackground">#FAF9F5</item>
         <item name="android:colorAccent">#93452E</item>
     </style>
+    <!-- Translucent only so music can be swiped down over the browser; video converts to opaque at runtime. -->
+    <style name="Theme.Gotgan.Player">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@android:style/Animation.Activity</item>
+    </style>
 </resources>

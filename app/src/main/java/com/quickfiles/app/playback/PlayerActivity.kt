@@ -32,6 +32,9 @@ class PlayerActivity : ComponentActivity() {
     private var multiWindow by mutableStateOf(false)
     private var topResumed by mutableStateOf(false)
     private var outputVisible by mutableStateOf(true)
+    // The theme starts translucent so a pulled-down music player can reveal the browser task.
+    private var translucent = true
+    private var revealable by mutableStateOf(false)
     private var autoPip = false
     private var returningToBrowser = false
     private var pipActionId = ""
@@ -55,19 +58,28 @@ class PlayerActivity : ComponentActivity() {
         if (enabled) videoTrack(true)
     }
     private fun willAutoPip() = !returningToBrowser && autoPip && !graph.playback.sessionState.value.audioOnly && graph.playback.state.value.video && graph.playback.state.value.playing
-    private fun returnToBrowser() {
+    private fun revealBrowser(enabled: Boolean) {
+        // Video needs an opaque window: translucent activities defer orientation to the task below.
+        if (translucent != enabled) { setTranslucent(enabled); translucent = enabled }
+        revealable = enabled
+    }
+    private fun returnToBrowser() = returnToBrowser(animated = true)
+    private fun returnToBrowser(animated: Boolean) {
         if (returningToBrowser) return
         returningToBrowser = true
         RecentsCoordinator.browser(this)
         setPictureInPictureParams(buildPipParams())
         // The player owns a separate task for PiP. Reuse the existing browser task
         // and Activity so Back preserves both panes, selection and scroll position.
+        // After a swipe the player has already left the screen over the visible browser,
+        // so any further transition would replay the reveal.
+        val options = if (animated) null else android.app.ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle()
         startActivity(Intent(this, MainActivity::class.java).addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP,
-        ))
+        ), options)
         finish()
         @Suppress("DEPRECATION")
-        overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+        overridePendingTransition(if (animated) android.R.anim.fade_in else 0, if (animated) android.R.anim.fade_out else 0)
     }
     private fun pipAction(action: String, requestCode: Int, icon: Int, title: String, description: String): RemoteAction {
         val sessionId = graph.playback.sessionState.value.sessionId
@@ -178,7 +190,9 @@ class PlayerActivity : ComponentActivity() {
             LaunchedEffect(detail.mediaId) {
                 if (manualMediaId != detail.mediaId) { manualPortrait = null; manualMediaId = detail.mediaId }
             }
-            LaunchedEffect(detail.mediaId, detail.aspect, detail.seekable, orientationOverride, pip, multiWindow, topResumed, state.video, state.playing, state.playWhenReady, state.visible, sessionState.audioOnly, sessionState.sessionId) {
+            val reveal = !state.video && !pip && !multiWindow
+            LaunchedEffect(reveal) { revealBrowser(reveal) }
+            LaunchedEffect(reveal, detail.mediaId, detail.aspect, detail.seekable, orientationOverride, pip, multiWindow, topResumed, state.video, state.playing, state.playWhenReady, state.visible, sessionState.audioOnly, sessionState.sessionId) {
                 // Android sizes PiP and split windows itself. Changing the orientation request
                 // during a PiP transition starts a competing display rotation.
                 if (topResumed && !pip && !multiWindow) {
@@ -191,7 +205,8 @@ class PlayerActivity : ComponentActivity() {
                 setPictureInPictureParams(buildPipParams())
             }
             GotganTheme(darkOverride = true, manageSystemBars = false) {
-                PlayerScreen(graph.playback, pip, this, outputVisible, onBack = ::returnToBrowser, onPip = ::enterPip,
+                PlayerScreen(graph.playback, pip, this, outputVisible, revealable, onBack = ::returnToBrowser,
+                    onDismiss = { returnToBrowser(animated = false) }, onPip = ::enterPip,
                     onRotate = { manualPortrait = resources.configuration.orientation != Configuration.ORIENTATION_PORTRAIT },
                     onStop = { lifecycleScope.launch { graph.playback.stop(); returnToBrowser() } },
                     onView = { output ->
