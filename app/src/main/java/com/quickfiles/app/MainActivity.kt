@@ -48,6 +48,8 @@ class MainActivity : ComponentActivity() {
         // A special permission is granted/revoked outside the app, not through a runtime dialog.
         hasStorageAccess = Environment.isExternalStorageManager()
         if (hasStorageAccess) settingsUnavailable = false
+        // Free space and volumes may have changed while away, e.g. after formatting in system settings.
+        AppGraph.get(this).repository.volumes.refresh()
     }
 
     override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {

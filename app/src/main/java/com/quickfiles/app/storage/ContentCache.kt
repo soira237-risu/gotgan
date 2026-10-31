@@ -83,7 +83,7 @@ class ContentCache(private val root: File, private val capacity: suspend () -> L
     suspend fun channel(provider: StorageProvider, supplied: FileEntry): SeekableByteChannel = withContext(Dispatchers.IO) {
         val entry = provider.stat(supplied.location)
         if (provider is LocalStorageProvider) return@withContext provider.channel(entry.location)
-        if (entry.location.sourceId == LOCAL_SOURCE || entry.revision.strongEtag == null || entry.size == null) {
+        if (isLocalSource(entry.location.sourceId) || entry.revision.strongEtag == null || entry.size == null) {
             val lease = full(provider, entry)
             return@withContext LeasedChannel(RandomAccessFile(lease.file, "r").channel, lease)
         }

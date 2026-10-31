@@ -105,6 +105,8 @@ internal fun PreviewScreen(preview: PreviewState, model: ExplorerViewModel, back
 }
 
 internal fun formatBytes(value: Long): String = when {
+    value >= 1024 * 1024 * MIB -> String.format(Locale.getDefault(), "%.1f TiB", value.toDouble() / (1024 * 1024 * MIB))
+    value >= 1024 * MIB -> String.format(Locale.getDefault(), "%.1f GiB", value.toDouble() / (1024 * MIB))
     value >= MIB -> String.format(Locale.getDefault(), "%.1f MiB", value.toDouble() / MIB)
     value >= 1024 -> String.format(Locale.getDefault(), "%.1f KiB", value / 1024.0)
     else -> "$value B"

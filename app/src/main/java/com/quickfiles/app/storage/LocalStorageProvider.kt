@@ -13,13 +13,17 @@ import java.nio.file.FileAlreadyExistsException
 import java.nio.file.NoSuchFileException
 import kotlin.coroutines.coroutineContext
 
-class LocalStorageProvider(root: File, private val canRead: () -> Boolean) : WritableStorageProvider {
+class LocalStorageProvider(
+    root: File, private val sourceId: String = LOCAL_SOURCE, private val rootName: String = "휴대폰 저장소",
+    private val writable: Boolean = true, private val canRead: () -> Boolean,
+) : WritableStorageProvider {
+    constructor(root: File, canRead: () -> Boolean) : this(root, LOCAL_SOURCE, canRead = canRead)
     private val root = root.canonicalFile
-    override val capabilities = StorageCapabilities(writable = true, rangedRead = true)
+    override val capabilities = StorageCapabilities(writable = writable, rangedRead = true)
 
     private fun resolve(location: StorageLocation): File {
-        if (!canRead()) throw StorageException(StorageError.ACCESS, "휴대폰의 ‘모든 파일 접근’ 권한을 허용해 주세요.")
-        require(location.sourceId == LOCAL_SOURCE)
+        if (!canRead()) throw StorageException(StorageError.ACCESS, if (sourceId == LOCAL_SOURCE) "휴대폰의 ‘모든 파일 접근’ 권한을 허용해 주세요." else "‘$rootName’에 접근할 수 없습니다. 연결 상태와 ‘모든 파일 접근’ 권한을 확인해 주세요.")
+        require(location.sourceId == sourceId)
         var segment = root
         location.path.split('/').filter { it.isNotEmpty() }.forEach {
             segment = File(segment, it)
@@ -37,7 +41,7 @@ class LocalStorageProvider(root: File, private val canRead: () -> Boolean) : Wri
     }
 
     private fun entry(file: File, location: StorageLocation) = FileEntry(
-        location, if (location.path.isEmpty()) "휴대폰 저장소" else file.name, file.isDirectory,
+        location, if (location.path.isEmpty()) rootName else file.name, file.isDirectory,
         if (file.isDirectory) null else file.length(), file.lastModified(),
     )
 
@@ -83,6 +87,7 @@ class LocalStorageProvider(root: File, private val canRead: () -> Boolean) : Wri
     }
     private fun mutableFile(location: StorageLocation): File {
         require(location.path.isNotEmpty()) { "저장소 루트는 변경할 수 없습니다." }
+        if (!writable) throw StorageException(StorageError.ACCESS, "‘$rootName’은 읽기 전용으로 연결되어 있습니다.")
         return resolve(location)
     }
     override suspend fun createDirectory(location: StorageLocation): Unit = withContext(Dispatchers.IO) {
