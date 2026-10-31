@@ -61,6 +61,7 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
     val firstState by first.state.collectAsStateWithLifecycle(); val secondState by second.state.collectAsStateWithLifecycle()
     val models = listOf(first, second); val states = listOf(firstState, secondState)
     val active = models[workspace.active]; val state = states[workspace.active]
+    val volumes by first.volumes.collectAsStateWithLifecycle()
     val player by first.graph.playback.state.collectAsStateWithLifecycle()
     val context = LocalContext.current; val scope = rememberCoroutineScope()
     var command by rememberSaveable { mutableStateOf<String?>(null) }
@@ -144,7 +145,7 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                         when (shown) {
                             DockMode.SELECTING -> {
                                 val selection = active.selection()
-                                val canModify = state.writable && selection.all { it.accessError == null && (it.location.sourceId == LOCAL_SOURCE || it.revision.strongEtag != null) }
+                                val canModify = state.writable && selection.all { it.accessError == null && (isLocalSource(it.location.sourceId) || it.revision.strongEtag != null) }
                                 GlassSurface(Modifier.fillMaxWidth().testTag("selection-bar")) {
                                     Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 5.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                                         BarItem(Symbols.ContentCopy, "복사", { controller.prepare(PendingTransfer(workspace.active, selection.map { it.location }, false, states[1 - workspace.active].location)) }, Modifier.weight(1f))
@@ -158,6 +159,11 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                                                 DropdownMenuItem({ Text("이름 변경") }, { command = "이름 변경"; selectionMenu = false }, enabled = canModify && selection.size == 1)
                                                 DropdownMenuItem({ Text("공유") }, { active.shareSelected(); selectionMenu = false }, enabled = selection.none { it.isDirectory })
                                                 DropdownMenuItem({ Text("파일 정보") }, { command = "파일 정보"; selectionMenu = false }, enabled = selection.size == 1)
+                                                // One-tap transfer to each plugged-in drive's root; the destination sheet still confirms.
+                                                volumes.filter { !it.readOnly && selection.none { item -> item.location.sourceId == it.sourceId } }.forEach { volume ->
+                                                    DropdownMenuItem({ Text("‘${volume.name}’으로 복사") }, { controller.prepare(PendingTransfer(workspace.active, selection.map { it.location }, false, StorageLocation(volume.sourceId))); selectionMenu = false })
+                                                    DropdownMenuItem({ Text("‘${volume.name}’으로 이동") }, { controller.prepare(PendingTransfer(workspace.active, selection.map { it.location }, true, StorageLocation(volume.sourceId))); selectionMenu = false }, enabled = canModify)
+                                                }
                                                 DropdownMenuItem({ Text("ZIP 만들기") }, { command = "ZIP 만들기"; selectionMenu = false }, enabled = state.writable)
                                                 if (!canModify) Text("권한 또는 서버 변경 확인 기능이 필요합니다", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
                                             }
@@ -330,8 +336,9 @@ private fun DestinationPicker(model: ExplorerViewModel, initial: StorageLocation
         BoxWithConstraints(Modifier.weight(1f)) {
             val width = maxWidth.value
             val columns = if (settings.grid) gridColumns(width, LocalDensity.current.fontScale, settings.density) else 1
-            val places = remember(location, entries, state.profiles, settings.showHidden) {
-                if (location == null) listOf(PlaceItem(LOCAL_SOURCE, "휴대폰 저장소", "", StorageLocation(LOCAL_SOURCE))) + state.profiles.map { PlaceItem(it.id, it.name, "WebDAV", StorageLocation(it.id)) }
+            val volumes by model.volumes.collectAsStateWithLifecycle()
+            val places = remember(location, entries, state.profiles, settings.showHidden, volumes) {
+                if (location == null) listOf(PlaceItem(LOCAL_SOURCE, "휴대폰 저장소", "", StorageLocation(LOCAL_SOURCE))) + volumes.map(::volumePlace) + state.profiles.map { PlaceItem(it.id, it.name, "WebDAV", StorageLocation(it.id)) }
                 else entries.filter { settings.showHidden || !it.name.startsWith('.') }.map { PlaceItem(it.id, it.name, "", it.location) }
             }
             Column {

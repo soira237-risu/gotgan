@@ -76,6 +76,8 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
     val graph = AppGraph.get(application)
     val settings = graph.settings.settings.stateIn(viewModelScope, SharingStarted.Eagerly, ExplorerSettings())
     val places = MutableStateFlow<List<SavedValue>>(emptyList())
+    /** Mounted USB drives and SD cards; they appear and vanish as the user plugs them in. */
+    val volumes = graph.repository.volumes.volumes
     private val store = ConnectionStore(application)
     private val cache = PreviewCache(File(application.cacheDir, "previews"))
     private val mutableState = MutableStateFlow(ExplorerState())
@@ -101,6 +103,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         viewModelScope.launch {
             graph.operations.changed.collect { location ->
                 folders.remove(location.key)
+                if (isVolumeSource(location.sourceId)) graph.repository.volumes.refresh()
                 if (state.value.location == location) {
                     val generation = browseGeneration
                     try {
@@ -121,6 +124,16 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             }
         }
         refreshPlaces()
+        viewModelScope.launch {
+            volumes.collect { mounted ->
+                val ids = mounted.mapTo(HashSet()) { it.sourceId }
+                folders.keys.filter { isVolumeSource(it.substringBefore(':')) && it.substringBefore(':') !in ids }.forEach { folders.remove(it) }
+                val location = state.value.location
+                if (location != null && isVolumeSource(location.sourceId) && location.sourceId !in ids) {
+                    home(); notice("이동식 저장소가 분리되어 저장소 목록으로 돌아왔습니다.")
+                }
+            }
+        }
         viewModelScope.launch {
             val persisted = graph.dao.saved("tab:$tabId")?.value?.let { runCatching { JSONObject(it) }.getOrNull() }
             store.profiles.catch { mutableState.update { it.copy(profilesReady = true, error = "저장소 설정을 읽지 못했습니다. 앱을 다시 실행해 주세요.") } }
@@ -147,7 +160,9 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
 
     suspend fun provider(sourceId: String): StorageProvider = graph.repository.provider(sourceId)
 
-    fun sourceName(sourceId: String) = if (sourceId == LOCAL_SOURCE) "휴대폰 저장소" else state.value.profiles.firstOrNull { it.id == sourceId }?.name ?: "WebDAV"
+    fun sourceName(sourceId: String) = if (sourceId == LOCAL_SOURCE) "휴대폰 저장소"
+        else if (isVolumeSource(sourceId)) graph.repository.volumes.volume(sourceId)?.name ?: "이동식 저장소 (분리됨)"
+        else state.value.profiles.firstOrNull { it.id == sourceId }?.name ?: "WebDAV"
 
     fun navigate(location: StorageLocation, refresh: Boolean = false, restoredSort: SortOrder? = null, restoredIndex: Int = 0, restoredOffset: Int = 0, restoredDirection: SortDirection? = null, restoredAnchor: ViewportAnchor? = null) {
         rememberFolder()
@@ -162,10 +177,10 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         val anchor = old?.anchor ?: restoredAnchor ?: ViewportAnchor(index = restoredIndex, offset = restoredOffset)
         val index = old?.index ?: restoredIndex
         val offset = old?.offset ?: restoredOffset
-        val canUseCache = old != null && !refresh && (location.sourceId != LOCAL_SOURCE || state.value.hasPermission)
+        val canUseCache = old != null && !refresh && (!isLocalSource(location.sourceId) || state.value.hasPermission)
         mutableState.update { it.copy(location = location, entries = if (canUseCache) old!!.entries else emptyList(), sort = order,
             index = index, offset = offset, direction = direction, anchor = anchor, searchOpen = false, viewportEpoch = it.viewportEpoch + 1, loading = !canUseCache, error = null, selected = emptySet(), query = "", searchResults = null, searching = false, kind = null,
-            gridOverride = if (it.location == location) it.gridOverride else null, writable = location.sourceId != LOCAL_SOURCE || it.hasPermission) }
+            gridOverride = if (it.location == location) it.gridOverride else null, writable = !isLocalSource(location.sourceId) || it.hasPermission) }
         savePosition()
         viewModelScope.launch { graph.dao.save(SavedValue("recent:${location.key}", location.encode())); refreshPlaces() }
         viewModelScope.launch {
@@ -327,9 +342,9 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         val changed = granted != state.value.hasPermission
         mutableState.update { it.copy(hasPermission = granted) }
         if (changed) {
-            folders.keys.filter { it.startsWith("$LOCAL_SOURCE:") }.forEach { folders.remove(it) }
+            folders.keys.filter { isLocalSource(it.substringBefore(':')) }.forEach { folders.remove(it) }
             val location = state.value.location
-            if (location?.sourceId == LOCAL_SOURCE) navigate(location, refresh = true)
+            if (location != null && isLocalSource(location.sourceId)) navigate(location, refresh = true)
         }
     }
 
@@ -371,7 +386,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                         if (generation == viewGeneration) mutableState.update { it.copy(preview = it.preview?.copy(read = bytes, total = total)) }
                     }
                 }
-                val lease = if (entry.isImage) graph.cache.full(source, entry, if (entry.location.sourceId == LOCAL_SOURCE) Long.MAX_VALUE else IMAGE_LIMIT, progress) else null
+                val lease = if (entry.isImage) graph.cache.full(source, entry, if (isLocalSource(entry.location.sourceId)) Long.MAX_VALUE else IMAGE_LIMIT, progress) else null
                 if (generation != viewGeneration) { lease?.close(); return@launch }
                 imageLease = lease
                 val document = if (entry.isText) TextDocument.read(source, entry) else null
@@ -582,7 +597,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             newName?.let(::requireFileName)
             val destination = newName?.let { current.entry.location.parent()!!.child(it) } ?: current.entry.location
             graph.operations.enqueueText(bytes, destination, doc.revision, newName != null)
-            TransferScheduler.schedule(getApplication(), destination.sourceId != LOCAL_SOURCE)
+            TransferScheduler.schedule(getApplication(), !isLocalSource(destination.sourceId))
             notice("저장 작업을 추가했습니다. ‘작업’에서 결과를 확인하세요.")
             closePreview()
         } catch (e: CancellationException) { throw e }

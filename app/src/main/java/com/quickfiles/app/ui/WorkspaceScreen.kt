@@ -143,7 +143,7 @@ internal fun TasksPanel(model: ExplorerViewModel) {
                 requireFileName(saveName)
                 val destination = decodeLocation(JSONObject(task.payload).getString("destination")).parent()!!.child(saveName)
                 model.graph.operations.retryTextAs(task.id, destination)
-                TransferScheduler.schedule(context, destination.sourceId != LOCAL_SOURCE); savingAs = null
+                TransferScheduler.schedule(context, !com.quickfiles.app.storage.isLocalSource(destination.sourceId)); savingAs = null
             } catch (e: Exception) { saveError = readableError(e) }
         }
     }) { Text("저장") } }, dismissButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { savingAs = null }) { Text("취소") } }) }
