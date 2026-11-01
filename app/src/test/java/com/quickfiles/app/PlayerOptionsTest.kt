@@ -28,6 +28,8 @@ class PlayerOptionsTest {
         assertTrue(file("transport.ts").isVideo); assertFalse(file("transport.ts").isText)
         listOf("3gpp", "mpg", "mpeg", "flv").forEach { assertTrue(file("video.$it").isVideo) }
         listOf("m4b", "oga", "amr").forEach { assertTrue(file("audio.$it").isAudio) }
+        listOf("MTS", "m2ts", "m2t", "avi", "divx", "vob", "mpe", "f4v").forEach { assertTrue(file("camcorder.$it").isVideo); assertFalse(file("camcorder.$it").isAudio) }
+        listOf("ac3", "EC3", "eac3", "mka", "weba", "mp2", "mpa", "awb").forEach { assertTrue(file("track.$it").isAudio); assertFalse(file("track.$it").isVideo) }
         assertFalse(file("book.epub").isText); assertFalse(file("bad.avif.exe").isImage)
     }
     @Test fun subtitleEncodingIsStrictAndKeepsKorean() {
