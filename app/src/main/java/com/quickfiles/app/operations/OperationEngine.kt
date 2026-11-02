@@ -111,7 +111,8 @@ class OperationEngine(
         val task = dao.task(id) ?: return false
         val data = payload(task)
         val sources = data.getJSONArray("sources")
-        if ((0 until sources.length()).any { decodeLocation(sources.getString(it)).sourceId != LOCAL_SOURCE }) return true
+        // Received files sit in app storage like phone files, so they never need the network either.
+        if ((0 until sources.length()).any { decodeLocation(sources.getString(it)).sourceId.let { id -> id != LOCAL_SOURCE && id != INBOX_SOURCE } }) return true
         if (data.optString("destination").takeIf { it.isNotEmpty() && it != "null" }?.let { decodeLocation(it).sourceId != LOCAL_SOURCE } == true) return true
         val trashIds = data.optJSONArray("trashIds") ?: return false
         return (0 until trashIds.length()).any { dao.trash(trashIds.getString(it))?.source != LOCAL_SOURCE }

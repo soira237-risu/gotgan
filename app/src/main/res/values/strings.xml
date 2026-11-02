@@ -1,3 +1,6 @@
 <resources>
     <string name="app_name">곳간</string>
+    <string name="receive_label">곳간에 저장</string>
+    <string name="view_label">곳간으로 열기</string>
+    <string name="pick_label">곳간에서 고르기</string>
 </resources>

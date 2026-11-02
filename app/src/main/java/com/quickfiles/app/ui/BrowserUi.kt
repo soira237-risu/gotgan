@@ -174,7 +174,7 @@ fun ExplorerScreen(model: ExplorerViewModel, hasPermission: Boolean, settingsUna
     }
     FileActions(state, model, command, { command = null })
     state.editor?.let { ConnectionDialog(it, model) }
-    state.handoff?.let { handoff -> AlertDialog(onDismissRequest = {}, title = { Text("다른 앱으로 열기") }, text = {
+    state.handoff?.let { handoff -> AlertDialog(onDismissRequest = {}, title = { Text(handoff.title) }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("‘${handoff.name}’을 준비하고 있어요.")
             val total = handoff.total

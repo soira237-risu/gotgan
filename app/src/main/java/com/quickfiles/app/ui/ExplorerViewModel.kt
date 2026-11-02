@@ -41,7 +41,19 @@ data class PreviewState(
     val token: String = UUID.randomUUID().toString(),
 )
 
-data class Handoff(val name: String, val read: Long = 0, val total: Long? = null)
+data class Handoff(val name: String, val read: Long = 0, val total: Long? = null, val title: String = "다른 앱으로 열기")
+
+/** An app asked Gotgan to pick files (ACTION_GET_CONTENT); tapping a matching file returns it instead of opening it. */
+class PickRequest(val mimeTypes: List<String>, val multiple: Boolean, val deliver: (List<android.net.Uri>) -> Unit, val cancel: () -> Unit) {
+    fun accepts(entry: FileEntry) = !entry.isDirectory && MimeTypes.accepts(mimeTypes, MimeTypes.forName(entry.name).let { if (it == MimeTypes.ANY) "application/octet-stream" else it })
+    val label: String get() = when {
+        mimeTypes.isEmpty() || mimeTypes.any { it == "*/*" } -> "파일"
+        mimeTypes.all { it.startsWith("image/") } -> "사진"
+        mimeTypes.all { it.startsWith("video/") } -> "영상"
+        mimeTypes.all { it.startsWith("audio/") } -> "음악"
+        else -> "파일"
+    }
+}
 
 data class ConnectionEditor(
     val token: String = UUID.randomUUID().toString(), val existing: ConnectionProfile? = null,
@@ -154,7 +166,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
 
     suspend fun provider(sourceId: String): StorageProvider = graph.repository.provider(sourceId)
 
-    fun sourceName(sourceId: String) = if (sourceId == LOCAL_SOURCE) "휴대폰 저장소" else state.value.profiles.firstOrNull { it.id == sourceId }?.name ?: "WebDAV"
+    fun sourceName(sourceId: String) = if (sourceId == LOCAL_SOURCE) "휴대폰 저장소" else if (sourceId == INBOX_SOURCE) "받은 파일" else state.value.profiles.firstOrNull { it.id == sourceId }?.name ?: "WebDAV"
 
     fun navigate(location: StorageLocation, refresh: Boolean = false, restoredSort: SortOrder? = null, restoredIndex: Int = 0, restoredOffset: Int = 0, restoredDirection: SortDirection? = null, restoredAnchor: ViewportAnchor? = null) {
         rememberFolder()
@@ -340,14 +352,19 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         }
     }
 
+    /** Set by the Activity while another app is waiting for a picked file. */
+    var picker: PickRequest? by mutableStateOf(null)
+
     fun open(entry: FileEntry) {
         flushViewport()
         if (entry.accessError != null) { notice(entry.accessError); return }
+        picker?.let { request -> if (!entry.isDirectory) { pick(listOf(entry), request); return } }
         if (entry.isDirectory) { navigate(entry.location); return }
         if (entry.isVideo || entry.isAudio) {
             viewModelScope.launch {
                 try {
-                    graph.playback.play(entry, state.value.entries)
+                    // A file from elsewhere (e.g. another app) must not start this folder's playlist instead.
+                    graph.playback.play(entry, state.value.entries.takeIf { list -> list.any { it.id == entry.id } } ?: listOf(entry))
                     getApplication<Application>().startActivity(android.content.Intent(getApplication(), com.quickfiles.app.playback.PlayerActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
                 } catch (e: Exception) { if (e is CancellationException) throw e; notice(readableError(e)) }
             }
@@ -553,6 +570,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             try {
                 graph.ready.await()
                 val taskId = graph.operations.enqueue(kind, sources, destination, policy, extra)
+                if (sources.any { it.sourceId == INBOX_SOURCE }) withContext(Dispatchers.IO) { graph.repository.inbox.attach(sources, taskId) }
                 onQueued()
                 if (!preserveSelection) clearSelection()
                 TransferScheduler.schedule(getApplication(), graph.operations.needsNetwork(taskId))
@@ -658,6 +676,66 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             finally { if (generation == handoffGeneration) mutableState.update { it.copy(handoff = null) } }
         }
     }
+    /** Hands [entries] to the app that asked for a file. Remote files are fetched first, under the same progress dialog. */
+    fun pick(entries: List<FileEntry>, requested: PickRequest? = null) {
+        val request = requested ?: picker ?: return
+        val files = entries.filter { !it.isDirectory }
+        if (files.isEmpty()) return
+        files.firstOrNull { !request.accepts(it) }?.let { notice("‘${it.name}’은 요청한 형식이 아닙니다. ${request.label}을 골라 주세요."); return }
+        files.firstOrNull { it.accessError != null }?.let { notice(it.accessError); return }
+        handing?.cancel()
+        val generation = ++handoffGeneration
+        mutableState.update { it.copy(handoff = Handoff(if (files.size == 1) files.single().name else "${files.size}개 파일", total = files.mapNotNull { f -> f.size }.takeIf { s -> s.size == files.size }?.sum(), title = "파일 보내기")) }
+        handing = viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                val uris = ArrayList<android.net.Uri>()
+                var done = 0L
+                for (entry in files) {
+                    val lease = graph.cache.full(provider(entry.location.sourceId), entry) { bytes, _ ->
+                        mutableState.update { if (generation == handoffGeneration) it.copy(handoff = it.handoff?.copy(read = done + bytes)) else it }
+                    }
+                    graph.keepPicked(lease)
+                    done += lease.file.length()
+                    uris += androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", lease.file, entry.name)
+                }
+                if (generation == handoffGeneration) request.deliver(uris)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { DiagnosticLog.record("HANDOFF", "pick", e); notice(readableError(e)) }
+            finally { if (generation == handoffGeneration) mutableState.update { it.copy(handoff = null) } }
+        }
+    }
+
+    /**
+     * Copies what another app sent into the inbox, then calls [ready] with the received locations.
+     * Used for "save to Gotgan" (share) and for opening another app's file in the built-in viewers.
+     */
+    fun receive(items: List<Incoming>, title: String, ready: (List<StorageLocation>) -> Unit) {
+        if (items.isEmpty()) return
+        handing?.cancel()
+        val generation = ++handoffGeneration
+        mutableState.update { it.copy(handoff = Handoff(if (items.size == 1) "받은 파일" else "받은 파일 ${items.size}개", title = title)) }
+        handing = viewModelScope.launch {
+            try {
+                val locations = graph.repository.inbox.receive(getApplication<Application>().contentResolver, items) { bytes, total ->
+                    mutableState.update { if (generation == handoffGeneration) it.copy(handoff = it.handoff?.copy(read = bytes, total = total)) else it }
+                }
+                if (generation == handoffGeneration) ready(locations) else graph.repository.inbox.discard(locations)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { DiagnosticLog.record("HANDOFF", "receive", e); notice(readableError(e)) }
+            finally { if (generation == handoffGeneration) mutableState.update { it.copy(handoff = null) } }
+        }
+    }
+
+    /** Opens a received file in the matching built-in viewer or the player. */
+    fun openReceived(location: StorageLocation) {
+        viewModelScope.launch {
+            try { open(provider(location.sourceId).stat(location)) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { notice(readableError(e)) }
+        }
+    }
+
     fun cancelOpenWith() { handoffGeneration++; handing?.cancel(); handing = null; mutableState.update { it.copy(handoff = null) } }
     override fun onCleared() { closePreview(); sharing.forEach { it.close() }; handoffs.forEach { it.close() }; super.onCleared() }
 }

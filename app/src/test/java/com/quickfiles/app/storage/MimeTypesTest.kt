@@ -1,6 +1,9 @@
 package com.quickfiles.app.storage
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** "Open with" must hand other apps a concrete type whenever the extension is known, and a wildcard otherwise. */
@@ -32,5 +35,26 @@ class MimeTypesTest {
         assertEquals(MimeTypes.ANY, type("archive.unknownext"))
         assertEquals(MimeTypes.ANY, type(".hidden"))
         assertEquals(MimeTypes.ANY, type("끝점."))
+    }
+
+    @Test fun pickerPatternsMatchTypeAndSubtype() {
+        assertTrue(MimeTypes.accepts(emptyList(), "application/pdf"))
+        assertTrue(MimeTypes.accepts(listOf("*/*"), "video/mp4"))
+        assertTrue(MimeTypes.accepts(listOf("image/*"), "image/jpeg"))
+        assertTrue(MimeTypes.accepts(listOf("IMAGE/*"), "image/png"))
+        assertFalse(MimeTypes.accepts(listOf("image/*"), "video/mp4"))
+        assertTrue(MimeTypes.accepts(listOf("image/*", "application/pdf"), "application/pdf"))
+        assertFalse(MimeTypes.accepts(listOf("application/pdf"), "application/zip"))
+        assertTrue(MimeTypes.accepts(listOf("image"), "image/gif"))
+    }
+
+    @Test fun extensionsForUnnamedStreams() {
+        val platform = mapOf("image/jpeg" to "jpg")
+        assertEquals("jpg", MimeTypes.extensionFor("image/jpeg", platform::get))
+        assertEquals("jpg", MimeTypes.extensionFor("Image/JPEG; charset=binary", platform::get))
+        assertEquals("epub", MimeTypes.extensionFor("application/epub+zip", platform::get))
+        assertNull(MimeTypes.extensionFor("image/*", platform::get))
+        assertNull(MimeTypes.extensionFor(null, platform::get))
+        assertNull(MimeTypes.extensionFor("application/x-unknown", platform::get))
     }
 }
