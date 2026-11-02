@@ -70,6 +70,7 @@ dependencies {
     implementation(libs.media3.ui)
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)
+    implementation(libs.coil.svg)
     implementation(libs.work.runtime)
     implementation(libs.commons.compress)
     implementation(libs.xz)
