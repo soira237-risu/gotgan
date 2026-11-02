@@ -83,7 +83,10 @@ internal fun PreviewScreen(preview: PreviewState, model: ExplorerViewModel, back
     Scaffold(modifier = Modifier.fillMaxSize().testTag("preview"), topBar = {
         TopAppBar(title = { Text(preview.entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium) }, navigationIcon = {
             GlassIconButton(Symbols.ArrowBackIosNew, "닫기", { model.closePreview() }, Modifier.padding(start = 8.dp).testTag("close-preview"), iconSize = 18.dp)
-        }, actions = { ViewerTrashAction(preview, model) }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background))
+        }, actions = {
+            ToolIcon(Symbols.OpenInNew, "다른 앱으로 열기", { model.openWith(preview.entry) }, modifier = Modifier.testTag("viewer-open-with"))
+            ViewerTrashAction(preview, model)
+        }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background))
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             when {
@@ -95,6 +98,7 @@ internal fun PreviewScreen(preview: PreviewState, model: ExplorerViewModel, back
                 preview.error != null -> Column(Modifier.padding(20.dp)) {
                     ErrorPanel(preview.error)
                     if (preview.entry.isImage || preview.entry.isText) Button(shape = MaterialTheme.shapes.small, onClick = { model.open(preview.entry) }) { Text("다시 시도") }
+                    if (preview.unsupported) Button(shape = MaterialTheme.shapes.small, onClick = { model.openWith(preview.entry) }, modifier = Modifier.testTag("unsupported-open-with")) { Text("다른 앱으로 열기") }
                 }
                 preview.document != null -> TextDocumentView(preview, model)
                 preview.pdf != null -> PdfDocumentView(preview, model)

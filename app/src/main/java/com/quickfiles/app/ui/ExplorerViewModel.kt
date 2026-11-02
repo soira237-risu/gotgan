@@ -36,10 +36,12 @@ data class PreviewState(
     val bitmap: Bitmap? = null, val text: TextPreview? = null, val error: String? = null,
     val cp949: Boolean = false, val decodedText: String = "", val previous: FileEntry? = null, val next: FileEntry? = null,
     val asset: File? = null, val document: TextDocument? = null, val pdf: PdfDocument? = null, val archive: ArchiveDocument? = null,
-    val draft: String? = null,
+    val draft: String? = null, val unsupported: Boolean = false,
     val archiveSelected: Set<String> = emptySet(), val archiveCurrent: String? = null,
     val token: String = UUID.randomUUID().toString(),
 )
+
+data class Handoff(val name: String, val read: Long = 0, val total: Long? = null)
 
 data class ConnectionEditor(
     val token: String = UUID.randomUUID().toString(), val existing: ConnectionProfile? = null,
@@ -62,6 +64,8 @@ data class ExplorerState(
     val kind: FileKind? = null,
     /** This folder's remembered list/grid choice; null follows the global default. */
     val gridOverride: Boolean? = null,
+    /** A file being fetched so another app can open it; null when idle. */
+    val handoff: Handoff? = null,
 )
 
 private data class FolderSnapshot(val entries: List<FileEntry>, val sort: SortOrder, val index: Int, val offset: Int, val direction: SortDirection, val anchor: ViewportAnchor)
@@ -95,6 +99,9 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
     private var pendingViewport: ViewportAnchor? = null
     private var imageLease: ContentCache.Lease? = null
     private val sharing = mutableListOf<ContentCache.Lease>()
+    private val handoffs = mutableListOf<ContentCache.Lease>()
+    private var handing: Job? = null
+    private var handoffGeneration = 0
     private val textHistory = mutableListOf<Long>()
 
     init {
@@ -357,7 +364,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         val position = images.indexOfFirst { it.id == entry.id }
         mutableState.update { it.copy(preview = PreviewState(entry, previous = images.getOrNull(position - 1), next = if (position >= 0) images.getOrNull(position + 1) else null)) }
         if (!entry.isImage && !entry.isText && !entry.isPdf && !entry.isArchive) {
-            mutableState.update { it.copy(preview = it.preview?.copy(loading = false, error = "이 파일 형식은 내장 뷰어에서 지원하지 않습니다. 파일 메뉴에서 공유로 열어 주세요.")) }
+            mutableState.update { it.copy(preview = it.preview?.copy(loading = false, error = "이 파일 형식은 내장 뷰어에서 지원하지 않습니다. 다른 앱으로 열어 주세요.", unsupported = true)) }
             return
         }
         viewing = viewModelScope.launch {
@@ -616,5 +623,41 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             catch (e: Exception) { notice(readableError(e)) }
         }
     }
-    override fun onCleared() { closePreview(); sharing.forEach { it.close() }; super.onCleared() }
+    /**
+     * Opens one file in another app through ACTION_VIEW. Remote files are fetched into the cache first;
+     * the lease stays pinned until the next hand-off so the receiving app can keep reading it.
+     */
+    fun openWith(entry: FileEntry) {
+        if (entry.isDirectory) return
+        if (entry.accessError != null) { notice(entry.accessError); return }
+        handing?.cancel()
+        val generation = ++handoffGeneration
+        mutableState.update { it.copy(handoff = Handoff(entry.name, total = entry.size)) }
+        handing = viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                var lastProgress = 0L
+                val lease = graph.cache.full(provider(entry.location.sourceId), entry) { bytes, total ->
+                    val now = System.nanoTime()
+                    if (now - lastProgress >= 100_000_000 || bytes == total) {
+                        lastProgress = now
+                        mutableState.update { if (generation == handoffGeneration) it.copy(handoff = it.handoff?.copy(read = bytes, total = total ?: it.handoff.total)) else it }
+                    }
+                }
+                if (generation != handoffGeneration) { lease.close(); return@launch }
+                handoffs.forEach { it.close() }; handoffs.clear(); handoffs += lease
+                val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", lease.file, entry.name)
+                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                    .setDataAndType(uri, MimeTypes.forName(entry.name))
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                intent.clipData = android.content.ClipData.newUri(context.contentResolver, entry.name, uri)
+                context.startActivity(intent)
+            } catch (e: CancellationException) { throw e }
+            catch (_: android.content.ActivityNotFoundException) { notice("이 파일을 열 수 있는 앱이 없습니다.") }
+            catch (e: Exception) { DiagnosticLog.record("HANDOFF", "open", e); notice(readableError(e)) }
+            finally { if (generation == handoffGeneration) mutableState.update { it.copy(handoff = null) } }
+        }
+    }
+    fun cancelOpenWith() { handoffGeneration++; handing?.cancel(); handing = null; mutableState.update { it.copy(handoff = null) } }
+    override fun onCleared() { closePreview(); sharing.forEach { it.close() }; handoffs.forEach { it.close() }; super.onCleared() }
 }

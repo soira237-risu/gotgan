@@ -174,6 +174,15 @@ fun ExplorerScreen(model: ExplorerViewModel, hasPermission: Boolean, settingsUna
     }
     FileActions(state, model, command, { command = null })
     state.editor?.let { ConnectionDialog(it, model) }
+    state.handoff?.let { handoff -> AlertDialog(onDismissRequest = {}, title = { Text("다른 앱으로 열기") }, text = {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("‘${handoff.name}’을 준비하고 있어요.")
+            val total = handoff.total
+            if (total != null && total > 0) LinearProgressIndicator({ (handoff.read.toFloat() / total).coerceIn(0f, 1f) }, Modifier.fillMaxWidth())
+            else LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (handoff.read > 0) Text("${formatBytes(handoff.read)}${total?.let { " / ${formatBytes(it)}" }.orEmpty()}", style = MaterialTheme.typography.bodySmall)
+        }
+    }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { model.cancelOpenWith() }, modifier = Modifier.testTag("cancel-open-with")) { Text("취소") } }, modifier = Modifier.testTag("open-with-progress")) }
     state.notice?.let { message -> AlertDialog(onDismissRequest = { model.notice(null) }, text = { Text(message) }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { model.notice(null) }) { Text("확인") } }) }
 }
 
