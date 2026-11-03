@@ -13,6 +13,8 @@ kxml = "2.3.0"
 androidxJunit = "1.3.0"
 testRunner = "1.7.0"
 room = "2.8.4"
+# Matches the androidx.sqlite release Room depends on; the bundled JVM driver runs migration tests on the host.
+sqlite = "2.6.2"
 media3 = "1.9.3"
 # FFmpeg decoders built against the same Media3 release (GPL-3.0).
 nextlib = "1.9.3-0.12.0"
@@ -50,6 +52,8 @@ androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-mani
 room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+room-testing = { module = "androidx.room:room-testing", version.ref = "room" }
+sqlite-bundled-jvm = { module = "androidx.sqlite:sqlite-bundled-jvm", version.ref = "sqlite" }
 media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
 media3-session = { module = "androidx.media3:media3-session", version.ref = "media3" }
 nextlib-media3ext = { module = "io.github.anilbeesetti:nextlib-media3ext", version.ref = "nextlib" }
