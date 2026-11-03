@@ -400,7 +400,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                 try {
                     // A file from elsewhere (e.g. another app) must not start this folder's playlist instead.
                     graph.playback.play(entry, state.value.entries.takeIf { list -> list.any { it.id == entry.id } } ?: listOf(entry))
-                    getApplication<Application>().startActivity(android.content.Intent(getApplication(), com.quickfiles.app.playback.PlayerActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                    com.quickfiles.app.playback.openPlayer(getApplication(), music = entry.isAudio)
                 } catch (e: Exception) { if (e is CancellationException) throw e; notice(readableError(e)) }
             }
             return

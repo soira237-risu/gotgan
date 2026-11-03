@@ -51,8 +51,12 @@ internal fun shouldDismissPlayer(offsetPx: Float, velocityY: Float, heightPx: Fl
  * [onDismiss]; otherwise it springs back.
  */
 @Composable
-internal fun PlayerDismissFrame(enabled: Boolean, onDismiss: () -> Unit, content: @Composable BoxScope.() -> Unit) {
+internal fun PlayerDismissFrame(enabled: Boolean, onDismiss: () -> Unit, entrance: Int = 0, content: @Composable BoxScope.() -> Unit) {
     val offset = remember { Animatable(0f) }
+    // Opening music slides the player up over the browser, the same way a swipe sends it back down.
+    // It starts below the screen from the first frame so nothing flashes in place first.
+    val enter = remember { Animatable(if (entrance > 0) 1f else 0f) }
+    LaunchedEffect(entrance) { if (entrance > 0) { if (enter.value == 0f) enter.snapTo(1f); enter.animateTo(0f, com.quickfiles.app.ui.MaterialMotion.viewerEnter()) } }
     val dismiss by rememberUpdatedState(onDismiss)
     var leaving by remember { mutableStateOf(false) }
     // Setting leaving restarts the gesture block, so the exit must not run in its scope.
@@ -113,8 +117,8 @@ internal fun PlayerDismissFrame(enabled: Boolean, onDismiss: () -> Unit, content
             alpha = if (offset.value > 0f && size.height > 0f) .45f * (1f - offset.value / size.height).coerceIn(0f, 1f) else 0f
         }.background(Color.Black))
         Box(Modifier.fillMaxSize().graphicsLayer {
-            translationY = offset.value
-            if (offset.value > 0f) { shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp); clip = true }
+            translationY = offset.value + enter.value * size.height
+            if (translationY > 0f) { shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp); clip = true }
         }.background(Color.Black), content = content)
     }
 }

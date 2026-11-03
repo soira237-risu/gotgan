@@ -43,7 +43,7 @@ import kotlinx.coroutines.launch
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 internal fun PlayerScreen(connection: PlaybackConnection, pip: Boolean, activity: Activity, outputEnabled: Boolean, revealable: Boolean,
-    onBack: () -> Unit, onDismiss: () -> Unit, onPip: () -> Unit, onRotate: () -> Unit, onStop: () -> Unit, onView: (PlayerView) -> Unit) {
+    entrance: Int = 0, onBack: () -> Unit, onDismiss: () -> Unit, onPip: () -> Unit, onRotate: () -> Unit, onStop: () -> Unit, onView: (PlayerView) -> Unit) {
     var player by remember { mutableStateOf(connection.controller) }
     LaunchedEffect(connection) { player = connection.connect() }
     val state by connection.state.collectAsStateWithLifecycle()
@@ -112,7 +112,7 @@ internal fun PlayerScreen(connection: PlaybackConnection, pip: Boolean, activity
     }
     // Music can be pulled down to reveal the folder underneath. Video keeps the opaque window
     // its orientation requests need, and a locked or busy screen must not move.
-    PlayerDismissFrame(revealable && !state.video && !pip && !locked && menu == null, onDismiss) {
+    PlayerDismissFrame(revealable && !state.video && !pip && !locked && menu == null, onDismiss, entrance) {
         AndroidView(factory = { PlayerView(it).apply {
             useController = false; setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
             setBackgroundColor(android.graphics.Color.BLACK); setShutterBackgroundColor(android.graphics.Color.BLACK)

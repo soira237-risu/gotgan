@@ -39,6 +39,10 @@ import kotlinx.coroutines.launch
 /** Closes the enclosing sheet with its exit motion, then runs the action; outside a sheet it runs at once. */
 internal val LocalSheetDismiss = staticCompositionLocalOf<(() -> Unit) -> Unit> { { action -> action() } }
 
+/** Whether the enclosing sheet is still wanted; when not, it plays its exit and then calls [exited]. */
+internal class SheetPresence(val visible: Boolean, val exited: () -> Unit)
+internal val LocalSheetPresence = staticCompositionLocalOf { SheetPresence(true) {} }
+
 /** Floating sheet that rises from below and always leaves the way it came; Compose applies the system animation duration scale. */
 @Composable
 internal fun WorkspaceSheet(title: String, onDismissRequest: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
@@ -59,6 +63,14 @@ internal fun WorkspaceSheet(title: String, onDismissRequest: () -> Unit, content
             reveal.animateTo(0f, MaterialMotion.spatial(), initialVelocity = if (travel > 0f) -velocity / travel else 0f)
             after()
         }
+    }
+    val presence = LocalSheetPresence.current
+    val exited by rememberUpdatedState(presence.exited)
+    // Removed by state rather than by the sheet itself: leave the same way, then let go.
+    LaunchedEffect(presence.visible) {
+        if (presence.visible) return@LaunchedEffect
+        if (!closing) { closing = true; settle?.cancel(); reveal.animateTo(0f, MaterialMotion.spatial()) }
+        exited()
     }
     Dialog({ close() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         val view = LocalView.current

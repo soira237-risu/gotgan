@@ -66,12 +66,13 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
     val context = LocalContext.current; val scope = rememberCoroutineScope()
     var command by rememberSaveable { mutableStateOf<String?>(null) }
     var selectionMenu by remember { mutableStateOf(false) }
-    val openPanel: (String) -> Unit = { if (it == "재생 중") context.startActivity(Intent(context, PlayerActivity::class.java)) else controller.panel(it) }
+    val openPanel: (String) -> Unit = { if (it == "재생 중") com.quickfiles.app.playback.openPlayer(context, music = !first.graph.playback.state.value.video) else controller.panel(it) }
     val previewOwner = workspace.viewerOwner?.takeIf { states[it].preview != null } ?: states.indexOfFirst { it.preview != null }.takeIf { it >= 0 }
     LaunchedEffect(firstState.preview?.entry?.id, secondState.preview?.entry?.id) { controller.viewer(previewOwner) }
     // A closed text, PDF or archive viewer stays on screen while it leaves, so the browser keeps its viewer layout until then.
     val leavingDocument = remember { LeavingDocument() }
     val viewerOwner = previewOwner ?: leavingDocument.owner
+    val leavingSheet = remember { LeavingSheet() }
     val panelDepth = remember { mutableFloatStateOf(0f) }
     val towardStart = if (LocalLayoutDirection.current == LayoutDirection.Rtl) 1f else -1f
     // While a full panel comes in, this screen steps back a quarter of its width and dims slightly.
@@ -208,7 +209,13 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
         }
         FileActions(state, active, command, { command = null })
         CompositionLocalProvider(LocalPanelDepth provides panelDepth) {
-        when (workspace.panel) {
+        // Sheets leave with their own motion even when state removes them (a finished transfer, a panel switched elsewhere):
+        // the last sheet stays composed, told it is no longer wanted, until its exit has played.
+        val liveSheet = workspace.panel?.takeIf { it in SHEET_PANELS && (it != "목적지" || workspace.pending != null) }
+        if (liveSheet != null) { leavingSheet.panel = liveSheet; workspace.pending?.let { leavingSheet.pending = it } }
+        leavingSheet.panel?.let { sheet -> key(sheet) {
+            CompositionLocalProvider(LocalSheetPresence provides SheetPresence(liveSheet == sheet) { if (leavingSheet.panel == sheet) leavingSheet.panel = null }) {
+            when (sheet) {
             "폴더 전환" -> WorkspaceSheet("폴더 전환", onDismissRequest = { controller.panel(null) }) {
                 Column(Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState())) {
                     states.forEachIndexed { index, folder ->
@@ -228,15 +235,19 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                     }
                 }
             }
-            "목적지" -> workspace.pending?.let { pending -> DestinationPanel(pending, models[pending.owner], { controller.panel(null) }, { controller.panel("목적지 선택") }, controller::cancelPreparation, controller::policy) { policy ->
+            "목적지" -> (workspace.pending ?: leavingSheet.pending)?.let { pending -> DestinationPanel(pending, models[pending.owner], { controller.panel(null) }, { controller.panel("목적지 선택") }, controller::cancelPreparation, controller::policy) { policy ->
                 if (controller.state.value.pending?.submitting == false) {
                     controller.submitting(true)
                     if (pending.archiveEntries != null) models[pending.owner].enqueue("EXTRACT", pending.sources, pending.destination!!.child(pending.outputFolder), extra = org.json.JSONObject().put("entries", org.json.JSONArray(pending.archiveEntries)), onQueued = { controller.cancelPreparation() }, onFinished = { controller.submitting(false) })
                     else models[pending.owner].enqueue(if (pending.move) "MOVE" else "COPY", pending.sources, pending.destination, policy, onQueued = { controller.completePreparation() }, onFinished = { controller.submitting(false) })
                 }
             } }
-            "목적지 선택" -> workspace.pending?.let { pending -> DestinationPicker(models[pending.owner], pending.destination, { controller.panel("목적지") }, controller::destination) }
             "작업 요약" -> WorkspaceSheet("작업", onDismissRequest = { controller.panel(null) }) { TaskSummary(active) { controller.panel("작업") } }
+            }
+            }
+        } }
+        when (workspace.panel) {
+            "목적지 선택" -> workspace.pending?.let { pending -> DestinationPicker(models[pending.owner], pending.destination, { controller.panel("목적지") }, controller::destination) }
             "작업", "휴지통", "설정" -> FullPanel(workspace.panel!!, { controller.panel(null) }) { when (workspace.panel) { "작업" -> TasksPanel(active); "휴지통" -> TrashPanel(active); else -> SettingsPanel(active) } }
             "최근 파일" -> FullPanel("최근 파일", { controller.panel(null) }) { RecentFilesPanel(active) { controller.panel(null) } }
             "저장공간 분석" -> FullPanel("저장공간 분석", { active.closeAnalysis(); controller.panel(null) }) { StorageAnalysisPanel(active) { controller.panel(null) } }
@@ -384,6 +395,14 @@ private fun DestinationPicker(model: ExplorerViewModel, initial: StorageLocation
         }
         Button(shape = MaterialTheme.shapes.small, onClick = { location?.let(choose) }, enabled = location != null && writable && !loading && error == null, modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)) { Text("이 폴더 선택") }
     }
+}
+
+private val SHEET_PANELS = setOf("폴더 전환", "목적지", "작업 요약")
+
+/** The sheet on screen and the transfer it shows, kept while it plays its exit after state has moved on. */
+private class LeavingSheet {
+    var panel by mutableStateOf<String?>(null)
+    var pending by mutableStateOf<PendingTransfer?>(null)
 }
 
 private enum class DockMode { EXPANDED, COMPACT, SELECTING, HIDDEN }
