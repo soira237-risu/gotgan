@@ -28,7 +28,7 @@
 - Verified copy and move, task queue
 - Trash with restore
 - Image, text, PDF and ZIP/CBZ viewers
-- Background media and picture-in-picture
+- Background media and picture-in-picture, including camcorder .mts/.m2ts and AC-3/DTS audio via FFmpeg
 - Six color themes, dark and OLED
 
 ## Build
@@ -42,3 +42,5 @@ Requires JDK 17 and Android SDK 36.
 ## License
 
 [MIT](LICENSE)
+
+The app's own source is MIT. Built APKs bundle [NextLib](https://github.com/anilbeesetti/nextlib) FFmpeg decoders, which are GPL-3.0, so a distributed APK as a whole follows GPL-3.0.
