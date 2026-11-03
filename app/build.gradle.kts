@@ -41,6 +41,13 @@ android {
     }
 }
 
+// Room writes each schema version to app/schemas (committed); migration tests read them on the host and on devices.
+kapt {
+    arguments { arg("room.schemaLocation", "$projectDir/schemas") }
+}
+android.sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
+android.sourceSets.getByName("test").resources.srcDir("$projectDir/schemas")
+
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
@@ -87,11 +94,13 @@ dependencies {
     testImplementation(libs.kxml)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.sshd.sftp)
+    testImplementation(libs.sqlite.bundled.jvm)
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
     androidTestImplementation(libs.okhttp.tls)
     androidTestImplementation(libs.mockwebserver)
+    androidTestImplementation(libs.room.testing)
     androidTestImplementation("org.codehaus.mojo:animal-sniffer-annotations:1.27")
     androidTestImplementation("com.google.errorprone:error_prone_annotations:2.50.0")
     androidTestImplementation(platform(libs.androidx.compose.bom))

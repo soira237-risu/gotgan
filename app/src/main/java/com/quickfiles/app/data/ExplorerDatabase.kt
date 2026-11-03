@@ -2,6 +2,8 @@ package com.quickfiles.app.data
 
 import android.content.Context
 import androidx.room.*
+import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
+import androidx.sqlite.driver.AndroidSQLiteDriver
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "tasks")
@@ -51,13 +53,19 @@ interface ExplorerDao {
     @Query("DELETE FROM saved_state WHERE `key` = :key") suspend fun removeSaved(key: String)
 }
 
-@Database(entities = [FileTask::class, TaskItem::class, TrashItem::class, SavedValue::class], version = 1, exportSchema = false)
+// Bump VERSION together with a new app/schemas/<version>.json and an ExplorerMigrations step (docs/DATABASE.md).
+@Database(entities = [FileTask::class, TaskItem::class, TrashItem::class, SavedValue::class], version = ExplorerDatabase.VERSION, exportSchema = true)
 abstract class ExplorerDatabase : RoomDatabase() {
     abstract fun dao(): ExplorerDao
     companion object {
+        const val VERSION = 1
+        const val NAME = "explorer.db"
         @Volatile private var instance: ExplorerDatabase? = null
         fun get(context: Context): ExplorerDatabase = instance ?: synchronized(this) {
-            instance ?: Room.databaseBuilder(context.applicationContext, ExplorerDatabase::class.java, "explorer.db").build().also { instance = it }
+            instance ?: Room.databaseBuilder(context.applicationContext, ExplorerDatabase::class.java, NAME)
+                .addMigrations(*ExplorerMigrations.ALL.toTypedArray())
+                .openHelperFactory(BackupBeforeMigrationFactory(FrameworkSQLiteOpenHelperFactory(), ::AndroidSQLiteDriver, VERSION))
+                .build().also { instance = it }
         }
     }
 }
