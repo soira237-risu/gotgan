@@ -222,7 +222,7 @@ private fun ExplorerHeader(state: ExplorerState, model: ExplorerViewModel, heade
     LaunchedEffect(state.searchOpen) { if (state.searchOpen) { headerState.heightOffset = 0f; searchFocus.requestFocus(); keyboard?.show() } }
     val selecting = state.selected.isNotEmpty()
     val location = state.location
-    val count = remember(state.entries, state.query, state.searchResults, state.kind, settings.showHidden) { if (location == null) 0 else model.visibleEntries().size }
+    val count = remember(state.entries, state.query, state.searchResults, state.kind, state.date, state.size, settings.showHidden) { if (location == null) 0 else model.visibleEntries().size }
     val title = when { selecting -> "${state.selected.size}개 선택"; location == null -> "곳간"; else -> location.path.substringAfterLast('/').ifEmpty { model.sourceName(location.sourceId) } }
     val meta = when { location == null -> "내 파일을 차곡차곡"; selecting -> "${model.sourceName(location.sourceId)} · ${count}개 중"; location.path.isEmpty() -> "항목 ${count}개"; else -> "${model.sourceName(location.sourceId)} · 항목 ${count}개" }
     val collapsed = headerState.collapsedFraction
@@ -263,6 +263,20 @@ private fun ExplorerHeader(state: ExplorerState, model: ExplorerViewModel, heade
                         FilterChip(on, { model.kind(if (on) null else kind) }, label = { Text(kind.label) }, shape = CircleShape,
                             leadingIcon = if (on) ({ Icon(Symbols.Check, null, Modifier.size(18.dp)) }) else null,
                             modifier = Modifier.testTag("search-kind-${kind.name.lowercase()}"))
+                    }
+                }
+                if (state.searchOpen) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    DateFilter.entries.forEach { date ->
+                        val on = state.date == date
+                        FilterChip(on, { model.date(if (on) null else date) }, label = { Text(date.label) }, shape = CircleShape,
+                            leadingIcon = if (on) ({ Icon(Symbols.Check, null, Modifier.size(18.dp)) }) else null, modifier = Modifier.testTag("search-date-${date.name.lowercase()}"))
+                    }
+                    VerticalDivider(Modifier.height(24.dp))
+                    SizeFilter.entries.forEach { size ->
+                        val on = state.size == size
+                        FilterChip(on, { model.size(if (on) null else size) }, label = { Text(size.label) }, shape = CircleShape,
+                            leadingIcon = if (on) ({ Icon(Symbols.Check, null, Modifier.size(18.dp)) }) else null, modifier = Modifier.testTag("search-size-${size.name.lowercase()}"))
                     }
                 }
                 if (!state.searchOpen) Column(Modifier.padding(horizontal = 20.dp)) {
@@ -455,7 +469,7 @@ private fun FolderStateView(state: ExplorerState, model: ExplorerViewModel, loca
                 profile?.let { StateAction("연결 정보 보기", "state-connection") { model.editConnection(it) } } ?: home, retry)
             else -> StateMessage(kind, error, retry, home)
         }
-        state.query.isNotBlank() || state.kind != null -> StateMessage(StateKind.NO_MATCH, "다른 이름으로 다시 찾아보세요. 하위 폴더까지 찾으려면 ‘하위 폴더 포함 검색’을 누르세요.")
+        state.query.isNotBlank() || state.kind != null || state.date != null || state.size != null -> StateMessage(StateKind.NO_MATCH, "다른 이름으로 다시 찾아보세요. 하위 폴더까지 찾으려면 ‘하위 폴더 포함 검색’을 누르세요.")
         else -> StateMessage(StateKind.EMPTY, if (state.writable) "다른 위치에서 파일을 복사해 오거나 새 폴더를 만들 수 있어요." else "이 위치에 표시할 파일이 없어요.",
             if (state.writable) StateAction("새 폴더", "state-new-folder") { onCommand("새 폴더") } else null,
             if (!settings.showHidden) StateAction("숨긴 파일 보기") { model.updateSettings { it.copy(showHidden = true) } } else null)
@@ -466,7 +480,7 @@ private fun FolderStateView(state: ExplorerState, model: ExplorerViewModel, loca
 private fun FolderContent(state: ExplorerState, model: ExplorerViewModel, onSettings: () -> Unit, bottomInset: Dp, onCommand: (String) -> Unit) {
     val location = state.location ?: return
     val settings by model.settings.collectAsStateWithLifecycle()
-    val entries = remember(state.entries, state.query, state.searchResults, state.kind, settings.showHidden) { model.visibleEntries() }
+    val entries = remember(state.entries, state.query, state.searchResults, state.kind, state.date, state.size, settings.showHidden) { model.visibleEntries() }
     Column(Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.weight(1f)) {
             val contentWidth = maxWidth.value - if (state.gridOverride ?: settings.grid) 16 else 32
@@ -493,7 +507,7 @@ private fun EntryCollection(entries: List<FileEntry>, state: ExplorerState, mode
     val grid = state.gridOverride ?: settings.grid
     val layout = if (grid) "grid:$columns:${settings.density}" else "list:${settings.listDensity}"
     // Recreate only the layout state, keeping the provider's entry list and selection untouched.
-    key(state.location?.key, state.viewportEpoch, layout, state.query, state.kind, state.searchResults != null) {
+    key(state.location?.key, state.viewportEpoch, layout, state.query, state.kind, state.date, state.size, state.searchResults != null) {
         val anchor = remember { model.currentViewportAnchor() }
         val position = remember { anchor.resolve(entries) }
         val currentEntries by rememberUpdatedState(entries)

@@ -78,6 +78,8 @@ data class ExplorerState(
     val searchResults: List<FileEntry>? = null, val writable: Boolean = false, val notice: String? = null,
     /** Search type filter; null shows every kind. */
     val kind: FileKind? = null,
+    /** Search date and size conditions. */
+    val date: DateFilter? = null, val size: SizeFilter? = null,
     /** This folder's remembered list/grid choice; null follows the global default. */
     val gridOverride: Boolean? = null,
     /** A file being fetched so another app can open it; null when idle. */
@@ -187,7 +189,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         val offset = old?.offset ?: restoredOffset
         val canUseCache = old != null && !refresh && (location.sourceId != LOCAL_SOURCE || state.value.hasPermission)
         mutableState.update { it.copy(location = location, entries = if (canUseCache) old!!.entries else emptyList(), sort = order,
-            index = index, offset = offset, direction = direction, anchor = anchor, searchOpen = false, viewportEpoch = it.viewportEpoch + 1, loading = !canUseCache, error = null, selected = emptySet(), query = "", searchResults = null, searching = false, kind = null,
+            index = index, offset = offset, direction = direction, anchor = anchor, searchOpen = false, viewportEpoch = it.viewportEpoch + 1, loading = !canUseCache, error = null, selected = emptySet(), query = "", searchResults = null, searching = false, kind = null, date = null, size = null,
             gridOverride = if (it.location == location) it.gridOverride else null, writable = location.sourceId != LOCAL_SOURCE || it.hasPermission) }
         savePosition()
         viewModelScope.launch { graph.dao.save(SavedValue("recent:${location.key}", location.encode())); refreshPlaces() }
@@ -215,7 +217,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         searching?.cancel(); searchGeneration++; persisting?.cancel(); searchReturn = null
         browsing?.cancel(); browseGeneration++
         closePreview()
-        mutableState.update { it.copy(location = null, entries = emptyList(), loading = false, error = null, selected = emptySet(), query = "", searchOpen = false, searchResults = null, kind = null, gridOverride = null) }
+        mutableState.update { it.copy(location = null, entries = emptyList(), loading = false, error = null, selected = emptySet(), query = "", searchOpen = false, searchResults = null, kind = null, date = null, size = null, gridOverride = null) }
         saved["source"] = null
         viewModelScope.launch { graph.dao.removeSaved("tab:$tabId") }
     }
@@ -289,17 +291,24 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
     }
 
     fun showSearch(open: Boolean) {
-        if (!open) { mutableState.update { it.copy(kind = null) }; query("") }
-        mutableState.update { it.copy(searchOpen = open, kind = if (open) it.kind else null) }
+        if (!open) { mutableState.update { it.copy(kind = null, date = null, size = null) }; query("") }
+        mutableState.update { if (open) it.copy(searchOpen = true) else it.copy(searchOpen = false, kind = null, date = null, size = null) }
     }
 
-    fun kind(value: FileKind?) {
+    fun kind(value: FileKind?) = filters(filters().copy(kind = value))
+    fun date(value: DateFilter?) = filters(filters().copy(date = value))
+    fun size(value: SizeFilter?) = filters(filters().copy(size = value))
+    fun filters() = state.value.let { SearchFilters(it.kind, it.date, it.size) }
+    private fun filters(value: SearchFilters) {
         flushViewport()
         val current = state.value
-        if (value == current.kind) return
-        val anchor = if (value == null && current.query.isEmpty()) searchReturn.also { searchReturn = null } ?: current.anchor
+        if (value == filters()) return
+        val anchor = if (!value.active && current.query.isEmpty()) searchReturn.also { searchReturn = null } ?: current.anchor
             else { if (searchReturn == null) searchReturn = current.anchor; ViewportAnchor(layout = current.anchor.layout) }
-        mutableState.update { it.copy(kind = value, selected = emptySet(), index = anchor.index, offset = anchor.offset, anchor = anchor) }
+        // Subfolder results found without a name were narrowed by the old conditions, so they no longer apply.
+        if (current.query.isBlank() && current.searchResults != null) { searching?.cancel(); searchGeneration++ }
+        mutableState.update { it.copy(kind = value.kind, date = value.date, size = value.size, selected = emptySet(), index = anchor.index, offset = anchor.offset, anchor = anchor,
+            searchResults = if (it.query.isBlank()) null else it.searchResults, searching = if (it.query.isBlank()) false else it.searching) }
     }
 
     /** Effective list/grid for the current location. */
@@ -502,15 +511,16 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
     }
 
     fun notice(message: String?) { mutableState.update { it.copy(notice = message) } }
-    fun visibleEntries(): List<FileEntry> = state.value.kind.let { kind ->
-        (state.value.searchResults ?: state.value.entries).filter { (settings.value.showHidden || !it.name.startsWith('.')) && it.name.contains(state.value.query, ignoreCase = true) && (kind == null || kind.matches(it)) }
+    fun visibleEntries(): List<FileEntry> = filters().let { filters ->
+        val now = System.currentTimeMillis()
+        (state.value.searchResults ?: state.value.entries).filter { (settings.value.showHidden || !it.name.startsWith('.')) && it.name.contains(state.value.query, ignoreCase = true) && filters.matches(it, now) }
     }
     fun select(entry: FileEntry) { mutableState.update { it.copy(selected = if (entry.id in it.selected) it.selected - entry.id else it.selected + entry.id) } }
     internal fun paintSelection(ids: Set<String>, selecting: Boolean, origin: ExplorerState) {
         if (ids.isEmpty()) return
         mutableState.update { current ->
             if (current.location != origin.location || current.viewportEpoch != origin.viewportEpoch ||
-                current.query != origin.query || current.kind != origin.kind || current.preview != null) current
+                current.query != origin.query || current.kind != origin.kind || current.date != origin.date || current.size != origin.size || current.preview != null) current
             else current.copy(selected = if (selecting) current.selected + ids else current.selected - ids)
         }
     }
@@ -523,7 +533,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         flushViewport()
         searching?.cancel(); searchGeneration++
         val current = state.value
-        val anchor = if (value.isEmpty() && current.kind == null) searchReturn.also { searchReturn = null } ?: current.anchor
+        val anchor = if (value.isEmpty() && !filters().active) searchReturn.also { searchReturn = null } ?: current.anchor
             else { if (searchReturn == null) searchReturn = current.anchor; if (value == current.query) current.anchor else ViewportAnchor(layout = current.anchor.layout) }
         mutableState.update { it.copy(query = value, searchResults = null, searching = false, index = anchor.index, offset = anchor.offset, anchor = anchor) }
     }
@@ -534,7 +544,8 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         if (cancel) { mutableState.update { it.copy(searching = false) }; return }
         val root = state.value.location ?: return
         val term = state.value.query
-        if (term.isBlank()) { notice("검색할 이름을 먼저 입력해 주세요."); return }
+        val filters = filters()
+        if (term.isBlank() && !filters.active) { notice("검색할 이름을 입력하거나 종류·날짜·크기 조건을 골라 주세요."); return }
         mutableState.update { it.copy(searching = true, searchResults = emptyList()) }
         searching = viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -544,7 +555,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                     ensureActive()
                     val entries = source.list(queue.removeFirst()).filterNot { OperationEngine.isManagedName(it.name) }
                     for (entry in entries) {
-                        if (entry.name.contains(term, true)) found += entry
+                        if (entry.name.contains(term, true) && (term.isNotBlank() || filters.matches(entry))) found += entry
                         if (entry.isDirectory && (settings.value.showHidden || !entry.name.startsWith('.'))) queue.add(entry.location)
                     }
                     ensureActive()

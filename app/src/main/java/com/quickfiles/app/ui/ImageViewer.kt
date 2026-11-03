@@ -246,7 +246,7 @@ internal fun ViewerTrashAction(preview: PreviewState, model: ExplorerViewModel, 
 @Composable
 private fun ThumbnailStrip(preview: PreviewState, model: ExplorerViewModel, modifier: Modifier = Modifier) {
     val state by model.state.collectAsStateWithLifecycle()
-    val images = remember(state.entries, state.query, state.searchResults, state.kind) { model.visibleEntries().filter { it.isImage } }
+    val images = remember(state.entries, state.query, state.searchResults, state.kind, state.date, state.size) { model.visibleEntries().filter { it.isImage } }
     val index = images.indexOfFirst { it.id == preview.entry.id }
     if (index < 0) return
     val window = images.subList((index - 4).coerceAtLeast(0), (index + 5).coerceAtMost(images.size))
