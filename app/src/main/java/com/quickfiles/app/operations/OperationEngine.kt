@@ -112,10 +112,10 @@ class OperationEngine(
         val data = payload(task)
         val sources = data.getJSONArray("sources")
         // Received files sit in app storage like phone files, so they never need the network either.
-        if ((0 until sources.length()).any { decodeLocation(sources.getString(it)).sourceId.let { id -> id != LOCAL_SOURCE && id != INBOX_SOURCE } }) return true
-        if (data.optString("destination").takeIf { it.isNotEmpty() && it != "null" }?.let { decodeLocation(it).sourceId != LOCAL_SOURCE } == true) return true
+        if ((0 until sources.length()).any { decodeLocation(sources.getString(it)).sourceId.let { id -> !isLocalSource(id) && id != INBOX_SOURCE } }) return true
+        if (data.optString("destination").takeIf { it.isNotEmpty() && it != "null" }?.let { !isLocalSource(decodeLocation(it).sourceId) } == true) return true
         val trashIds = data.optJSONArray("trashIds") ?: return false
-        return (0 until trashIds.length()).any { dao.trash(trashIds.getString(it))?.source != LOCAL_SOURCE }
+        return (0 until trashIds.length()).any { dao.trash(trashIds.getString(it))?.source?.let(::isLocalSource) != true }
     }
 
     suspend fun drain(onProgress: (FileTask) -> Unit = {}) = lock.withLock {

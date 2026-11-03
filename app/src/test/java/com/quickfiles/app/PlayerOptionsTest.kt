@@ -22,13 +22,16 @@ class PlayerOptionsTest {
     }
     @Test fun formatRoutesAreConsistentAndDoNotEnableNewEditing() {
         fun file(name: String, dir: Boolean = false) = FileEntry(StorageLocation(LOCAL_SOURCE, name), name, dir)
-        listOf("BMP", "heic", "heif", "avif").forEach { assertTrue(file("sample.$it").isImage); assertFalse(file("folder.$it", true).isImage) }
+        listOf("BMP", "heic", "heif", "avif", "jfif", "ICO", "svg", "dng", "CR2", "nef", "nrw", "arw", "rw2", "orf", "raf", "pef", "srw").forEach { assertTrue(file("sample.$it").isImage); assertFalse(file("folder.$it", true).isImage) }
         listOf("md", "json", "csv", "vtt", "properties").forEach { assertTrue(file("sample.$it").isText); assertFalse(file("sample.$it").isEditableText) }
         assertTrue(file("sample.TXT").isEditableText)
         assertTrue(file("transport.ts").isVideo); assertFalse(file("transport.ts").isText)
         listOf("3gpp", "mpg", "mpeg", "flv").forEach { assertTrue(file("video.$it").isVideo) }
         listOf("m4b", "oga", "amr").forEach { assertTrue(file("audio.$it").isAudio) }
+        listOf("MTS", "m2ts", "m2t", "avi", "divx", "vob", "mpe", "f4v").forEach { assertTrue(file("camcorder.$it").isVideo); assertFalse(file("camcorder.$it").isAudio) }
+        listOf("ac3", "EC3", "eac3", "mka", "weba", "mp2", "mpa", "awb").forEach { assertTrue(file("track.$it").isAudio); assertFalse(file("track.$it").isVideo) }
         assertFalse(file("book.epub").isText); assertFalse(file("bad.avif.exe").isImage)
+        assertTrue(FileFormats.isRawImage("IMG_0001.DNG")); assertFalse(FileFormats.isRawImage("photo.jpg")); assertFalse(file("drawing.svgz").isImage)
     }
     @Test fun subtitleEncodingIsStrictAndKeepsKorean() {
         val sample = "1\n00:00:01,000 --> 00:00:04,000\n한글 자막\n"

@@ -185,9 +185,13 @@ internal fun AnimatedAssetImage(asset: Any, model: ExplorerViewModel, modifier: 
             onSuccess = { dimensions = Size(it.result.image.width.toFloat(), it.result.image.height.toFloat()); error = false; onShown?.invoke() },
             onError = { error = true; onShown?.invoke() })
         if (dimensions == Size.Zero && !error) CircularProgressIndicator(Modifier.align(Alignment.Center))
-        if (error) Surface(Modifier.align(Alignment.Center).padding(24.dp)) { Text(if (sourceName?.endsWith(".avif", ignoreCase = true) == true && android.os.Build.VERSION.SDK_INT < 34)
-            "이 기기에서 AVIF 이미지를 표시하지 못했습니다. Android 14 미만에서는 기기 디코더 지원이 필요합니다."
-            else "이미지를 표시하지 못했습니다. 파일이 손상되었거나 지원하지 않는 형식일 수 있습니다.",
+        if (error) Surface(Modifier.align(Alignment.Center).padding(24.dp)) { Text(when {
+            sourceName?.endsWith(".avif", ignoreCase = true) == true && android.os.Build.VERSION.SDK_INT < 34 ->
+                "이 기기에서 AVIF 이미지를 표시하지 못했습니다. Android 14 미만에서는 기기 디코더 지원이 필요합니다."
+            sourceName != null && com.quickfiles.app.storage.FileFormats.isRawImage(sourceName) ->
+                "RAW 이미지를 표시하지 못했습니다. 이 기기의 디코더가 해당 카메라 형식을 지원하지 않거나 파일이 손상되었을 수 있습니다."
+            else -> "이미지를 표시하지 못했습니다. 파일이 손상되었거나 지원하지 않는 형식일 수 있습니다."
+        },
             Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
     }
 }
@@ -228,7 +232,7 @@ internal fun ViewerTrashAction(preview: PreviewState, model: ExplorerViewModel, 
     var confirm by remember(preview.entry.id) { mutableStateOf(false) }
     var submitting by remember(preview.entry.id) { mutableStateOf(false) }
     val canTrash = state.writable && preview.entry.accessError == null &&
-        (preview.entry.location.sourceId == LOCAL_SOURCE || preview.entry.revision.strongEtag != null)
+        (com.quickfiles.app.storage.isLocalSource(preview.entry.location.sourceId) || preview.entry.revision.strongEtag != null)
     if (overMedia) GlassIconButton(Symbols.Delete, "휴지통으로 이동", { confirm = true }, Modifier.testTag("viewer-trash"),
         enabled = canTrash && !submitting, colors = MediaGlass, tint = Color.White)
     else ToolIcon(Symbols.Delete, "휴지통으로 이동", { confirm = true }, enabled = canTrash && !submitting, modifier = Modifier.testTag("viewer-trash"))
