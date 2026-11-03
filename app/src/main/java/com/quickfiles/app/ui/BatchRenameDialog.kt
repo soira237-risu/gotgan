@@ -12,6 +12,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /** Renames the selection with a numbered template and find/replace, showing every resulting name before anything runs. */
 @Composable
@@ -20,7 +21,8 @@ internal fun BatchRenameDialog(model: ExplorerViewModel, dismiss: () -> Unit) {
     var find by rememberSaveable { mutableStateOf("") }
     var replace by rememberSaveable { mutableStateOf("") }
     var start by rememberSaveable { mutableStateOf("1") }
-    val plan = remember(template, find, replace, start, model.state.value.selected) {
+    val state by model.state.collectAsStateWithLifecycle()
+    val plan = remember(template, find, replace, start, state.selected, state.entries) {
         model.renamePlan(template, find, replace, start.toIntOrNull() ?: 1)
     }
     AlertDialog(onDismissRequest = dismiss, title = { Text("${plan.items.size}개 이름 변경") }, modifier = Modifier.testTag("batch-rename"), text = {
