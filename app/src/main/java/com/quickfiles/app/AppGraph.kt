@@ -20,6 +20,8 @@ class AppGraph(context: Context, val repository: StorageRepository = StorageRepo
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val dao = ExplorerDatabase.get(app).dao()
     val settings = SettingsStore(app)
+    /** Crash reports written by the handler [GotganApplication] installs at start. */
+    val crashLog = GotganApplication.crashLog(app)
     val cache = ContentCache(File(app.cacheDir, "content-v1")) { settings.settings.first().cacheMiB * 1024L * 1024 }
     val operations = OperationEngine(dao, repository::provider, File(app.filesDir, "transfer-staging"), cache::channel)
     val playback = com.quickfiles.app.playback.PlaybackConnection(app)

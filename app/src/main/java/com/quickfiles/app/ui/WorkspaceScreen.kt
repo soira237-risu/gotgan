@@ -227,6 +227,7 @@ internal fun SettingsPanel(model: ExplorerViewModel) {
             Slider(settings.textSize.toFloat(), { value -> model.updateSettings { it.copy(textSize = value.toInt()) } }, valueRange = 12f..32f, steps = 19,
                 modifier = Modifier.semantics { contentDescription = "텍스트 글자 크기"; stateDescription = "${settings.textSize}sp" })
         }
+        CrashReportsSection(model.graph.crashLog)
         Text("곳간 1.0.0 · 개인 설치용\n휴지통은 자동으로 비우지 않습니다.", Modifier.padding(start = 4.dp, top = 24.dp),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
