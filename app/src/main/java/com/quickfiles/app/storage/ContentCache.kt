@@ -14,7 +14,19 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 
 /** Versioned read cache only. Transfer stages and trash never live under this root. */
-class ContentCache(private val root: File, private val capacity: suspend () -> Long) {
+/**
+ * @param kept the copy of a server file the user keeps on the phone, if any. It is used instead of the network when it
+ *   is still the server's version, or when the server cannot be reached at all.
+ */
+class ContentCache(private val root: File, private val kept: (StorageLocation) -> KeptFile? = { null }, private val capacity: suspend () -> Long) {
+    /** A kept copy that may stand in for the server file: current, or the server is unreachable. */
+    private suspend fun keptCopy(provider: StorageProvider, location: StorageLocation): File? {
+        val copy = kept(location)?.takeIf { it.file.isFile } ?: return null
+        val current = try { provider.stat(location) } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: StorageException) { return if (e.kind == StorageError.NETWORK || e.kind == StorageError.TLS || e.kind == StorageError.AUTH) copy.file else null }
+            catch (e: java.io.IOException) { return copy.file }
+        return copy.file.takeIf { copy.revision.matches(current.revision) }
+    }
     private val mutex = Mutex()
     private val pins = ConcurrentHashMap<String, Int>()
     private val keyLocks = ConcurrentHashMap<String, Mutex>()
@@ -53,7 +65,8 @@ class ContentCache(private val root: File, private val capacity: suspend () -> L
         Lease(file) { unpin(file) }
     }
     suspend fun full(provider: StorageProvider, supplied: FileEntry, maximum: Long = Long.MAX_VALUE, progress: (Long, Long?) -> Unit = { _, _ -> }): Lease = retryRead { withContext(Dispatchers.IO) {
-        if (provider is LocalStorageProvider) return@withContext Lease(provider.fileForRead(supplied.location)) {}
+        if (provider is FileBackedProvider) return@withContext Lease(provider.fileForRead(supplied.location)) {}
+        keptCopy(provider, supplied.location)?.let { return@withContext Lease(it) {} }
         val entry = provider.stat(supplied.location)
         val versionKey = key(entry) + if (entry.etag == null && entry.modified == null) "-${java.util.UUID.randomUUID()}" else ""
         val file = File(directory(entry.location.sourceId), versionKey + ".full")
@@ -92,8 +105,9 @@ class ContentCache(private val root: File, private val capacity: suspend () -> L
         }
     } }
     suspend fun channel(provider: StorageProvider, supplied: FileEntry): SeekableByteChannel = withContext(Dispatchers.IO) {
+        if (provider is FileBackedProvider) return@withContext java.io.FileInputStream(provider.fileForRead(supplied.location)).channel
+        keptCopy(provider, supplied.location)?.let { return@withContext java.io.FileInputStream(it).channel }
         val entry = provider.stat(supplied.location)
-        if (provider is LocalStorageProvider) return@withContext provider.channel(entry.location)
         if (isLocalSource(entry.location.sourceId) || entry.revision.strongEtag == null || entry.size == null) {
             val lease = full(provider, entry)
             return@withContext LeasedChannel(RandomAccessFile(lease.file, "r").channel, lease)

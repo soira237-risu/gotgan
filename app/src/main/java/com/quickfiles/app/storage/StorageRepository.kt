@@ -9,10 +9,12 @@ class StorageRepository(context: Context, private val additionalProvider: (suspe
     val local = LocalStorageProvider(Environment.getExternalStorageDirectory()) { Environment.isExternalStorageManager() }
     val volumes = RemovableVolumes(context)
     val inbox = Inbox(java.io.File(context.applicationContext.filesDir, "inbox"))
+    val offline = OfflineStore(java.io.File(context.applicationContext.filesDir, "offline"))
     suspend fun provider(id: String): StorageProvider {
         additionalProvider?.invoke(id)?.let { return it }
         if (id == LOCAL_SOURCE) return local
         if (id == INBOX_SOURCE) return inbox.provider
+        if (id == OFFLINE_SOURCE) return offline.provider
         if (isVolumeSource(id)) return volumes.provider(id)
             ?: throw StorageException(StorageError.NOT_FOUND, "이동식 저장소가 연결되어 있지 않습니다. USB를 다시 연결해 주세요.")
         val profile = connections.profiles.first().firstOrNull { it.id == id }

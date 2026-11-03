@@ -394,6 +394,7 @@ private fun StorageHome(state: ExplorerState, model: ExplorerViewModel, settings
     val settings by model.settings.collectAsStateWithLifecycle()
     val places by model.places.collectAsStateWithLifecycle()
     val volumes by model.volumes.collectAsStateWithLifecycle()
+    val kept by model.kept.collectAsStateWithLifecycle()
     var details by remember { mutableStateOf<ConnectionProfile?>(null) }
     var volumeDetails by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf<ConnectionProfile?>(null) }
@@ -405,7 +406,8 @@ private fun StorageHome(state: ExplorerState, model: ExplorerViewModel, settings
         Column {
             LazyVerticalGrid(GridCells.Fixed(columns), Modifier.fillMaxSize().testTag("storage-home"), contentPadding = PaddingValues(start = edge, end = edge, top = 4.dp, bottom = bottomInset), horizontalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp), verticalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp)) {
                 item(span = { GridItemSpan(maxLineSpan) }) { sectionTitle("저장소") }
-                val sources = listOf(PlaceItem("phone", "휴대폰 저장소", "다운로드 · 사진 · 문서", StorageLocation(LOCAL_SOURCE))) + volumes.map(::volumePlace) + state.profiles.map { PlaceItem(it.id, it.name, it.protocol.label, StorageLocation(it.id), it) }
+                val sources = listOf(PlaceItem("phone", "휴대폰 저장소", "다운로드 · 사진 · 문서", StorageLocation(LOCAL_SOURCE))) + volumes.map(::volumePlace) + state.profiles.map { PlaceItem(it.id, it.name, it.protocol.label, StorageLocation(it.id), it) } +
+                    (if (kept.isEmpty()) emptyList() else listOf(PlaceItem(OFFLINE_SOURCE, "기기에 보관한 파일", "${kept.size}개 · ${formatBytes(kept.values.sumOf { it.file.length() })} · 연결 없이 열기", StorageLocation(OFFLINE_SOURCE))))
                 items(sources, key = { it.id }) { place -> PlaceCell(place, settings.grid, { model.navigate(place.location!!) }, { place.profile?.let { details = it }; place.volume?.let { volumeDetails = it.sourceId } }, listDensity = settings.listDensity) }
                 item { PlaceCell(PlaceItem("add", "저장소 추가", "WebDAV · SMB · SFTP", null), settings.grid,
                     { model.editConnection() }, {}, enabled = state.profilesReady, listDensity = settings.listDensity) }
@@ -495,7 +497,7 @@ private fun VolumeDialog(volume: RemovableVolume, open: () -> Unit, close: () ->
 @Composable
 private fun PlaceSymbol(place: PlaceItem) {
     Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape), contentAlignment = Alignment.Center) {
-        Icon(when { place.id == "add" -> Symbols.Add; place.profile != null -> Symbols.Dns; place.volume != null -> Symbols.Usb; else -> Symbols.FolderFilled }, null,
+        Icon(when { place.id == "add" -> Symbols.Add; place.profile != null -> Symbols.Dns; place.volume != null -> Symbols.Usb; place.id == OFFLINE_SOURCE -> Symbols.Inventory2; else -> Symbols.FolderFilled }, null,
             Modifier.size(26.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
     }
 }
@@ -513,6 +515,8 @@ private fun FolderStateView(state: ExplorerState, model: ExplorerViewModel, loca
             StateKind.AUTH -> StateMessage(kind, error, profile?.let { StateAction("다시 로그인", "state-login") { model.editConnection(it) } } ?: retry, home)
             StateKind.CERTIFICATE -> StateMessage(kind, "$error 곳간은 인증서 예외를 허용하지 않습니다.",
                 profile?.let { StateAction("연결 정보 보기", "state-connection") { model.editConnection(it) } } ?: home, retry)
+            // Without a connection, kept server files are still one tap away.
+            StateKind.NETWORK -> StateMessage(kind, error, retry, if (model.kept.value.isNotEmpty()) StateAction("기기에 보관한 파일", "state-offline") { model.navigate(StorageLocation(OFFLINE_SOURCE)) } else home)
             else -> StateMessage(kind, error, retry, home)
         }
         state.query.isNotBlank() || state.kind != null || state.date != null || state.size != null -> StateMessage(StateKind.NO_MATCH, "다른 이름으로 다시 찾아보세요. 하위 폴더까지 찾으려면 ‘하위 폴더 포함 검색’을 누르세요.")
@@ -549,6 +553,7 @@ private fun FolderContent(state: ExplorerState, model: ExplorerViewModel, onSett
 @Composable
 private fun EntryCollection(entries: List<FileEntry>, state: ExplorerState, model: ExplorerViewModel, width: Float, bottomInset: Dp) {
     val settings by model.settings.collectAsStateWithLifecycle()
+    val kept by model.kept.collectAsStateWithLifecycle()
     val columns = gridColumns(width, LocalDensity.current.fontScale, settings.density)
     val grid = state.gridOverride ?: settings.grid
     val layout = if (grid) "grid:$columns:${settings.density}" else "list:${settings.listDensity}"
@@ -602,7 +607,7 @@ private fun EntryCollection(entries: List<FileEntry>, state: ExplorerState, mode
                     scope.launch { model.graph.settings.update { it.copy(density = currentDensity.step(scale < 1f)) } }
                 })
             LazyVerticalGrid(GridCells.Fixed(columns), Modifier.fillMaxSize().then(gesture).testTag("folder-grid"), state = grid, contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 4.dp, bottom = bottomInset), horizontalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp), verticalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp)) {
-                items(entries, key = { it.id }, contentType = { if (it.isDirectory) "folder" else "file" }) { Box(Modifier.animateItem(fadeInSpec = MaterialMotion.effects(), placementSpec = MaterialMotion.spatial(), fadeOutSpec = MaterialMotion.effects())) { FileCell(it, it.id in state.selected, model, true, state.location?.path?.takeIf { _ -> state.searchResults != null }, square = columns > 1) { click(it) } } }
+                items(entries, key = { it.id }, contentType = { if (it.isDirectory) "folder" else "file" }) { Box(Modifier.animateItem(fadeInSpec = MaterialMotion.effects(), placementSpec = MaterialMotion.spatial(), fadeOutSpec = MaterialMotion.effects())) { FileCell(it, it.id in state.selected, model, true, state.location?.path?.takeIf { _ -> state.searchResults != null }, square = columns > 1, kept = it.id in kept) { click(it) } } }
             }
         } else {
             val list = remember { LazyListState(position, anchor.offsetFor(layout)) }
@@ -630,7 +635,7 @@ private fun EntryCollection(entries: List<FileEntry>, state: ExplorerState, mode
                 scroll = { list.scrollBy(it) })
             LazyColumn(Modifier.fillMaxSize().then(gesture).testTag("folder-list"), state = list, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = bottomInset)) {
                 // Within one folder, renamed, added or removed entries glide and fade instead of jumping; a new folder or filter recreates the list above.
-                items(entries, key = { it.id }, contentType = { if (it.isDirectory) "folder" else "file" }) { Box(Modifier.animateItem(fadeInSpec = MaterialMotion.effects(), placementSpec = MaterialMotion.spatial(), fadeOutSpec = MaterialMotion.effects())) { FileCell(it, it.id in state.selected, model, false, state.location?.path?.takeIf { _ -> state.searchResults != null }, listDensity = settings.listDensity, selecting = state.selected.isNotEmpty()) { click(it) } } }
+                items(entries, key = { it.id }, contentType = { if (it.isDirectory) "folder" else "file" }) { Box(Modifier.animateItem(fadeInSpec = MaterialMotion.effects(), placementSpec = MaterialMotion.spatial(), fadeOutSpec = MaterialMotion.effects())) { FileCell(it, it.id in state.selected, model, false, state.location?.path?.takeIf { _ -> state.searchResults != null }, listDensity = settings.listDensity, selecting = state.selected.isNotEmpty(), kept = it.id in kept) { click(it) } } }
             }
         }
     }
@@ -638,7 +643,7 @@ private fun EntryCollection(entries: List<FileEntry>, state: ExplorerState, mode
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun FileCell(entry: FileEntry, selected: Boolean, model: ExplorerViewModel, grid: Boolean, relativeRoot: String?, listDensity: ListDensity = ListDensity.COMPACT, selecting: Boolean = false, square: Boolean = true, open: () -> Unit) {
+private fun FileCell(entry: FileEntry, selected: Boolean, model: ExplorerViewModel, grid: Boolean, relativeRoot: String?, listDensity: ListDensity = ListDensity.COMPACT, selecting: Boolean = false, square: Boolean = true, kept: Boolean = false, open: () -> Unit) {
     val shape = MaterialTheme.shapes.small
     val cardShape = MaterialTheme.shapes.medium
     val background = key(MaterialTheme.colorScheme) {
@@ -682,9 +687,9 @@ private fun FileCell(entry: FileEntry, selected: Boolean, model: ExplorerViewMod
         val detailSlot = if (grid) Modifier.height(with(LocalDensity.current) { MaterialTheme.typography.bodySmall.lineHeight.toDp() }) else Modifier
         Text(entry.name, modifier = titleSlot, style = titleStyle, minLines = 1, maxLines = if (grid) 1 else 2, overflow = TextOverflow.Ellipsis)
         val configuration = androidx.compose.ui.platform.LocalConfiguration.current
-        val detail = remember(entry, relativeRoot, configuration) {
+        val detail = remember(entry, relativeRoot, configuration, kept) {
             if (relativeRoot != null) entry.location.path.removePrefix(relativeRoot).trimStart('/')
-            else listOfNotNull(if (entry.isDirectory) "폴더" else entry.size?.let(::formatBytes), entry.modified?.let { DateFormat.getDateInstance(DateFormat.SHORT).format(Date(it)) }).joinToString(" · ")
+            else listOfNotNull(if (kept) "기기에 보관됨" else null, if (entry.isDirectory) "폴더" else entry.size?.let(::formatBytes), entry.modified?.let { DateFormat.getDateInstance(DateFormat.SHORT).format(Date(it)) }).joinToString(" · ")
         }
         Text(if (grid) entry.accessError ?: detail else detail, modifier = detailSlot, style = MaterialTheme.typography.bodySmall, color = if (grid && entry.accessError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (!grid) entry.accessError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 2) }
@@ -721,7 +726,9 @@ internal fun Thumbnail(entry: FileEntry, model: ExplorerViewModel, modifier: Mod
     LaunchedEffect(entry.id, entry.etag, entry.modified) {
         var lease: ContentCache.Lease? = null
         try {
-            if (isLocalSource(entry.location.sourceId)) lease = model.graph.cache.full(model.provider(entry.location.sourceId), entry, IMAGE_LIMIT)
+            if (isDeviceSource(entry.location.sourceId)) lease = model.graph.cache.full(model.provider(entry.location.sourceId), entry, IMAGE_LIMIT)
+            // A kept server photo is on the phone already.
+            else if (model.graph.repository.offline.copyOf(entry.location) != null) lease = model.graph.repository.offline.copyOf(entry.location)?.let { ContentCache.Lease(it.file) {} }
             // A server photo's thumbnail is the whole file, so on mobile data only photos already fetched get one, as video and music do.
             else if (!model.graph.unmetered()) lease = model.graph.cache.cached(entry)
             else model.graph.thumbnailRequests.withPermit { lease = model.graph.cache.full(model.provider(entry.location.sourceId), entry, IMAGE_LIMIT) }

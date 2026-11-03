@@ -146,7 +146,7 @@ class Inbox(root: File) {
 }
 
 /** Read-only view of received files, so the transfer engine and viewers treat them like any other source. */
-class InboxProvider(private val root: File) : StorageProvider {
+class InboxProvider(private val root: File) : FileBackedProvider {
     override val capabilities = StorageCapabilities(writable = false, rangedRead = true)
 
     private fun resolve(location: StorageLocation): File {
@@ -167,6 +167,9 @@ class InboxProvider(private val root: File) : StorageProvider {
         val file = resolve(location)
         if (!file.exists()) throw StorageException(StorageError.NOT_FOUND, "받은 파일을 찾을 수 없습니다. 다시 공유해 주세요.")
         entry(file, location)
+    }
+    override suspend fun fileForRead(location: StorageLocation): File = withContext(Dispatchers.IO) {
+        resolve(location).takeIf { it.isFile } ?: throw StorageException(StorageError.NOT_FOUND, "받은 파일을 찾을 수 없습니다. 다시 공유해 주세요.")
     }
     override suspend fun openRead(location: StorageLocation): ReadHandle = openRead(location, 0, null)
     override suspend fun openRead(location: StorageLocation, offset: Long, expected: Revision?): ReadHandle = withContext(Dispatchers.IO) {

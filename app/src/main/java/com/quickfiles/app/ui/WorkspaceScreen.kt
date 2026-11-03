@@ -275,7 +275,7 @@ private fun ChecksumSection(entry: FileEntry, model: ExplorerViewModel) {
                 TextButton(shape = MaterialTheme.shapes.small, onClick = { running = false }) { Text("중지") }
             }
             done == null -> OutlinedButton(shape = MaterialTheme.shapes.small, onClick = { read = 0; running = true }, modifier = Modifier.testTag("compute-checksums")) {
-                Text(if (isLocalSource(entry.location.sourceId) || entry.location.sourceId == INBOX_SOURCE) "체크섬 계산" else "체크섬 계산 (파일 전체를 내려받습니다)")
+                Text(if (isDeviceSource(entry.location.sourceId)) "체크섬 계산" else "체크섬 계산 (파일 전체를 내려받습니다)")
             }
             else -> {
                 // The copy button turns into a check for a moment; a dialog on top of this one would be too much.

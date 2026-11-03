@@ -31,7 +31,7 @@ class MediaThumbnails(private val root: File, private val maximum: Long = 64 * M
         if (target.isFile) { target.setLastModified(System.currentTimeMillis()); return@withContext target }
         if (miss.exists()) return@withContext null
         val bitmap = try {
-            if (provider is LocalStorageProvider) local(provider.fileForRead(entry.location), entry, size)
+            if (provider is FileBackedProvider) local(provider.fileForRead(entry.location), entry, size)
             else if (provider.capabilities.rangedRead) remote(provider, entry, size)
             else null
         } catch (e: Exception) {

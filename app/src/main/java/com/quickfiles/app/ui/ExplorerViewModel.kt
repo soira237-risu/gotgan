@@ -192,6 +192,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
 
     fun sourceName(sourceId: String) = if (sourceId == LOCAL_SOURCE) "휴대폰 저장소"
         else if (sourceId == INBOX_SOURCE) "받은 파일"
+        else if (sourceId == OFFLINE_SOURCE) "기기에 보관한 파일"
         else if (isVolumeSource(sourceId)) graph.repository.volumes.volume(sourceId)?.name ?: "이동식 저장소 (분리됨)"
         else state.value.profiles.firstOrNull { it.id == sourceId }?.name ?: "서버"
 
@@ -713,7 +714,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         selected.firstOrNull { it.accessError != null }?.let { notice(it.accessError); return }
         handing?.cancel()
         val generation = ++handoffGeneration
-        val remote = selected.any { !isLocalSource(it.location.sourceId) && it.location.sourceId != INBOX_SOURCE }
+        val remote = selected.any { !isDeviceSource(it.location.sourceId) }
         val sizes = selected.map { it.size }
         val total = if (sizes.all { it != null }) sizes.sumOf { it ?: 0L } else null
         val label = selected.singleOrNull()?.name ?: "${selected.first().name} 외 ${selected.size - 1}개"
@@ -751,6 +752,53 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                 leases.forEach { it.close() }
                 if (generation == handoffGeneration) mutableState.update { it.copy(handoff = null) }
             }
+        }
+    }
+    /** Server files kept on the phone, by server location key. */
+    val kept = graph.repository.offline.kept
+    /** The server location a file stands for: itself, or the original of a kept copy. */
+    fun origin(entry: FileEntry): StorageLocation? = if (entry.location.sourceId == OFFLINE_SOURCE) graph.repository.offline.byLocation(entry.location)?.origin
+        else entry.location.takeUnless { isDeviceSource(it.sourceId) }
+    /** Downloads server files to keep on the phone, under the same cancellable progress dialog as "open with". */
+    fun keepOffline(entries: List<FileEntry> = selection()) {
+        val files = entries.filter { !it.isDirectory && !isDeviceSource(it.location.sourceId) }
+        if (files.isEmpty()) return
+        files.firstOrNull { it.accessError != null }?.let { notice(it.accessError); return }
+        handing?.cancel()
+        val generation = ++handoffGeneration
+        val sizes = files.map { it.size }
+        val total = if (sizes.all { it != null }) sizes.sumOf { it ?: 0L } else null
+        val label = files.singleOrNull()?.name ?: "${files.first().name} 외 ${files.size - 1}개"
+        mutableState.update { it.copy(handoff = Handoff(label, total = total, title = "기기에 보관")) }
+        handing = viewModelScope.launch {
+            try {
+                var done = 0L; var lastProgress = 0L
+                for (entry in files) {
+                    val kept = graph.repository.offline.keep(provider(entry.location.sourceId), entry) { bytes, _ ->
+                        val now = System.nanoTime()
+                        if (now - lastProgress >= 100_000_000) {
+                            lastProgress = now
+                            mutableState.update { if (generation == handoffGeneration) it.copy(handoff = it.handoff?.copy(read = done + bytes)) else it }
+                        }
+                    }
+                    done += kept.file.length()
+                }
+                clearSelection()
+                inform(if (files.size == 1) "‘${files.single().name}’을 기기에 보관했습니다. 연결 없이도 열 수 있습니다." else "${files.size}개 파일을 기기에 보관했습니다.")
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { DiagnosticLog.record("OFFLINE", "keep", e); notice(readableError(e)) }
+            finally { if (generation == handoffGeneration) mutableState.update { it.copy(handoff = null) } }
+        }
+    }
+    /** Removes kept copies of the given files (server files or the kept copies themselves); the server files stay. */
+    fun forgetOffline(entries: List<FileEntry> = selection()) {
+        val origins = entries.mapNotNull(::origin).filter { graph.repository.offline.copyOf(it) != null }
+        if (origins.isEmpty()) return
+        viewModelScope.launch {
+            graph.repository.offline.remove(origins)
+            clearSelection()
+            inform(if (origins.size == 1) "기기 보관을 해제했습니다." else "${origins.size}개 파일의 기기 보관을 해제했습니다.")
+            state.value.location?.takeIf { it.sourceId == OFFLINE_SOURCE }?.let { navigate(it, refresh = true) }
         }
     }
     /**
@@ -879,7 +927,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         analysis.value = AnalysisState(location)
         analyzing = viewModelScope.launch(Dispatchers.IO) {
             try {
-                val local = isLocalSource(location.sourceId) || location.sourceId == INBOX_SOURCE
+                val local = isDeviceSource(location.sourceId)
                 val report = StorageAnalyzer(isManagedName = OperationEngine::isManagedName)
                     .analyze(provider(location.sourceId), location, settings.value.showHidden, findDuplicates = local) { p ->
                         analysis.update { if (it?.root == location) it.copy(progress = p) else it }
