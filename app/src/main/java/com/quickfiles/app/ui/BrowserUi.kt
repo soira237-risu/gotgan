@@ -193,6 +193,7 @@ internal fun ExplorerMenuItems(state: ExplorerState, model: ExplorerViewModel, o
     val player by model.graph.playback.state.collectAsStateWithLifecycle()
     if (state.location != null) {
         DropdownMenuItem({ Text("새 폴더") }, { close { onCommand("새 폴더") } }, enabled = state.writable, leadingIcon = { Icon(Symbols.CreateNewFolder, null) })
+        DropdownMenuItem({ Text("새 파일") }, { close { onCommand("새 파일") } }, enabled = state.writable, modifier = Modifier.testTag("menu-new-file"), leadingIcon = { Icon(Symbols.NoteAdd, null) })
         if (!state.writable) Text("이 위치는 변경할 수 없습니다", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
         DropdownMenuItem({ Text("즐겨찾기 추가/해제") }, { close { model.favorite() } }, leadingIcon = { Icon(Symbols.Star, null) })
         DropdownMenuItem({ Text(if (settings.showHidden) "숨김 파일 감추기" else "숨김 파일 표시") }, { close { model.updateSettings { it.copy(showHidden = !it.showHidden) } } }, leadingIcon = { Icon(Symbols.Visibility, null) })

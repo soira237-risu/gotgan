@@ -637,6 +637,33 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         val preview = state.value.preview ?: return false
         return preview.document?.revision?.matches(provider(preview.entry.location.sourceId).stat(preview.entry.location).revision) == true
     }
+    /** Where a file lives, as text another app or a person can use: a filesystem path on the phone, a URL on a server. */
+    fun pathText(entry: FileEntry): String = when (entry.location.sourceId) {
+        LOCAL_SOURCE -> File(Environment.getExternalStorageDirectory(), entry.location.path).path
+        INBOX_SOURCE -> "받은 파일/" + entry.location.path
+        else -> state.value.profiles.firstOrNull { it.id == entry.location.sourceId }?.url?.trimEnd('/')
+            ?.let { base -> if (entry.location.path.isEmpty()) base else base + "/" + entry.location.path.split('/').joinToString("/") { android.net.Uri.encode(it) } }
+            ?: (sourceName(entry.location.sourceId) + "/" + entry.location.path)
+    }
+    fun copyPaths(entries: List<FileEntry> = selection()) {
+        if (entries.isEmpty()) return
+        val clipboard = getApplication<Application>().getSystemService(android.content.ClipboardManager::class.java) ?: return
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("경로", entries.joinToString("\n", transform = ::pathText)))
+        notice(if (entries.size == 1) "경로를 복사했어요." else "경로 ${entries.size}개를 복사했어요.")
+    }
+    fun newFile(name: String) {
+        val folder = state.value.location ?: return
+        runCatching { requireFileName(name) }.onFailure { notice(it.message); return }
+        if (state.value.entries.any { it.name.equals(name, ignoreCase = true) }) { notice("같은 이름의 항목이 있어요."); return }
+        enqueue("NEWFILE", emptyList(), folder.child(name))
+    }
+    fun renamePlan(template: String, find: String, replace: String, start: Int): RenamePlan =
+        BatchRename.plan(selection(), state.value.entries, template, find, replace, start)
+    fun batchRename(plan: RenamePlan) {
+        if (!plan.valid) return
+        val names = JSONObject().apply { plan.renames.forEach { put(it.entry.location.encode(), it.name) } }
+        enqueue("RENAME", plan.renames.map { it.entry.location }, extra = JSONObject().put("names", names))
+    }
     fun shareSelected() {
         val selected = selection().filterNot { it.isDirectory }
         viewModelScope.launch {

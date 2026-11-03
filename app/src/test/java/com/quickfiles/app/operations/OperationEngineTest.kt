@@ -34,6 +34,25 @@ class OperationEngineTest {
         assertEquals("verified original", phone.text("input.txt"))
         assertEquals("RESTORED", journal.trash(trash.id)!!.state)
     }
+    @Test fun batchRenameGivesEachSourceItsOwnNameAndNewFileIsEmpty() = runBlocking {
+        phone.file("a.txt", "first"); phone.file("b.txt", "second"); phone.file("taken.txt", "keep")
+        val engine = engine()
+        val names = JSONObject().put(StorageLocation("phone", "a.txt").encode(), "Trip 1.txt")
+            .put(StorageLocation("phone", "b.txt").encode(), "taken.txt")
+        val rename = engine.enqueue("RENAME", listOf(StorageLocation("phone", "a.txt"), StorageLocation("phone", "b.txt")), StorageLocation("phone"), extra = JSONObject().put("names", names))
+        engine.drain()
+        assertEquals("first", phone.text("Trip 1.txt"))
+        // A name already in use is skipped, never overwritten.
+        assertEquals("keep", phone.text("taken.txt")); assertEquals("second", phone.text("b.txt"))
+        assertEquals("PARTIAL", journal.task(rename)!!.state)
+        val created = engine.enqueue("NEWFILE", emptyList(), StorageLocation("phone", "empty.md"))
+        engine.drain()
+        assertEquals("COMPLETE", journal.task(created)!!.state)
+        assertEquals("", phone.text("empty.md"))
+        val again = engine.enqueue("NEWFILE", emptyList(), StorageLocation("phone", "taken.txt"))
+        engine.drain()
+        assertEquals("FAILED", journal.task(again)!!.state); assertEquals("keep", phone.text("taken.txt"))
+    }
     @Test fun corruptionAndNoSpaceNeverRemoveSource() = runBlocking {
         for (error in listOf("corrupt", "space")) {
             seed(); nas.corrupt = error == "corrupt"; nas.noSpace = error == "space"

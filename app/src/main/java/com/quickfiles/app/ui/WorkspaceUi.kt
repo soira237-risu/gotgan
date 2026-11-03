@@ -157,6 +157,8 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                                                 DropdownMenuItem({ Text("전체 선택") }, { active.selectAll(); selectionMenu = false })
                                                 DropdownMenuItem({ Text("선택 해제") }, { active.clearSelection(); selectionMenu = false })
                                                 DropdownMenuItem({ Text("이름 변경") }, { command = "이름 변경"; selectionMenu = false }, enabled = canModify && selection.size == 1)
+                                                DropdownMenuItem({ Text("일괄 이름 변경") }, { command = "일괄 이름 변경"; selectionMenu = false }, enabled = canModify && selection.size > 1, modifier = Modifier.testTag("menu-batch-rename"))
+                                                DropdownMenuItem({ Text("경로 복사") }, { active.copyPaths(selection); selectionMenu = false }, enabled = selection.isNotEmpty(), modifier = Modifier.testTag("menu-copy-path"))
                                                 DropdownMenuItem({ Text("다른 앱으로 열기") }, { selection.singleOrNull()?.let(active::openWith); selectionMenu = false }, enabled = selection.size == 1 && !selection.single().isDirectory)
                                                 DropdownMenuItem({ Text("공유") }, { active.shareSelected(); selectionMenu = false }, enabled = selection.none { it.isDirectory })
                                                 DropdownMenuItem({ Text("파일 정보") }, { command = "파일 정보"; selectionMenu = false }, enabled = selection.size == 1)

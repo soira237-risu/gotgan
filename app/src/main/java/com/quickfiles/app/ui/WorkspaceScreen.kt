@@ -38,7 +38,7 @@ import org.json.JSONObject
 import java.text.DateFormat
 import java.util.Date
 
-internal fun taskKindLabel(kind: String) = when (kind) { "COPY" -> "복사"; "MOVE" -> "이동"; "RENAME" -> "이름 변경"; "TRASH" -> "휴지통 이동"; "RESTORE" -> "복원"; "PURGE" -> "영구 삭제"; "MKDIR" -> "폴더 생성"; "SAVE", "SAVE_AS" -> "텍스트 저장"; "ZIP" -> "ZIP 만들기"; "EXTRACT" -> "압축 해제"; else -> kind }
+internal fun taskKindLabel(kind: String) = when (kind) { "COPY" -> "복사"; "MOVE" -> "이동"; "RENAME" -> "이름 변경"; "TRASH" -> "휴지통 이동"; "RESTORE" -> "복원"; "PURGE" -> "영구 삭제"; "MKDIR" -> "폴더 생성"; "NEWFILE" -> "파일 생성"; "SAVE", "SAVE_AS" -> "텍스트 저장"; "ZIP" -> "ZIP 만들기"; "EXTRACT" -> "압축 해제"; else -> kind }
 
 internal fun taskStateLabel(state: String) = when (state) { "QUEUED" -> "대기"; "RUNNING" -> "진행 중"; "PAUSING" -> "일시정지 중"; "CANCELLING" -> "취소 중"; "PAUSED" -> "일시정지"; "COMPLETE" -> "완료"; "PARTIAL" -> "부분 완료"; "FAILED" -> "실패"; "CANCELLED" -> "취소"; "PREPARING" -> "준비 중"; else -> state }
 
@@ -246,8 +246,9 @@ private fun FileInfo(entry: FileEntry, model: ExplorerViewModel) {
 internal fun FileActions(state: ExplorerState, model: ExplorerViewModel, command: String? = null, onConsumed: () -> Unit = {}) {
     var action by rememberSaveable { mutableStateOf<String?>(null) }
     var name by rememberSaveable { mutableStateOf("") }
-    LaunchedEffect(command) { if (command != null) { action = command; name = if (command == "이름 변경") model.selection().singleOrNull()?.name.orEmpty() else if (command == "ZIP 만들기") "Archive.zip" else ""; onConsumed() } }
+    LaunchedEffect(command) { if (command != null) { action = command; name = when (command) { "이름 변경" -> model.selection().singleOrNull()?.name.orEmpty(); "ZIP 만들기" -> "Archive.zip"; "새 파일" -> "새 텍스트.txt"; else -> "" }; onConsumed() } }
     val selection = model.selection()
+    if (action == "일괄 이름 변경") { BatchRenameDialog(model) { action = null }; return }
     action?.let { title -> AlertDialog(onDismissRequest = { action = null }, title = { Text(title) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState())) {
             when (title) {
@@ -259,6 +260,7 @@ internal fun FileActions(state: ExplorerState, model: ExplorerViewModel, command
     }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = {
         when (title) {
             "휴지통으로 이동" -> model.enqueue("TRASH")
+            "새 파일" -> model.newFile(name)
             "새 폴더" -> runCatching { requireFileName(name); model.enqueue("MKDIR", emptyList(), state.location!!.child(name)) }.onFailure { model.notice(it.message) }
             "이름 변경" -> runCatching { requireFileName(name); model.enqueue("RENAME", extra = JSONObject().put("name", name)) }.onFailure { model.notice(it.message) }
             "ZIP 만들기" -> runCatching { requireFileName(name); model.enqueue("ZIP", destination = state.location!!.child(if (name.endsWith(".zip", true)) name else "$name.zip")) }.onFailure { model.notice(it.message) }

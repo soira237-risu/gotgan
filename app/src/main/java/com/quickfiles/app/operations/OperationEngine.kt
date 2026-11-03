@@ -161,13 +161,19 @@ class OperationEngine(
                         }
                         "RENAME" -> {
                             val source = decodeLocation(target)
-                            requireFileName(data.getString("name"))
-                            transfer(task.id, source, source.parent()!!.child(data.getString("name")), ConflictPolicy.SKIP, true, onProgress)
+                            // A batch rename carries one new name per source; a single rename carries just "name".
+                            val name = data.optJSONObject("names")?.optString(target)?.takeIf { it.isNotEmpty() } ?: data.getString("name")
+                            requireFileName(name)
+                            transfer(task.id, source, source.parent()!!.child(name), ConflictPolicy.SKIP, true, onProgress)
                         }
                         "TRASH" -> { trash(decodeLocation(target), stableId(task.id, target)); true }
                         "RESTORE" -> { restore(target); true }
                         "PURGE" -> { purge(target); true }
                         "MKDIR" -> { createFolder(task.id, requireNotNull(destination)); true }
+                        "NEWFILE" -> {
+                            requireFileName(requireNotNull(destination).path.substringAfterLast('/'))
+                            generated(task.id, destination, 0, { ByteArrayInputStream(ByteArray(0)) }); true
+                        }
                         "SAVE" -> { saveText(task.id, data, requireNotNull(destination)); true }
                         "SAVE_AS" -> {
                             val bytes = textBytes(task.id, data)
