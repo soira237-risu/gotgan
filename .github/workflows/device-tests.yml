@@ -111,6 +111,7 @@ jobs:
           # Same 411 dp wide screen as a Pixel 6 with fewer pixels: the emulator renders in software.
           script: |
             adb shell wm size 720x1600 && adb shell wm density 280
+            .github/device-tests/probe.sh
             .github/device-tests/run.sh "$TESTS"
 
       - name: Device test output
