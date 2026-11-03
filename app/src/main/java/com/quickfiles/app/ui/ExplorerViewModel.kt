@@ -686,7 +686,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
     fun newFile(name: String) {
         val folder = state.value.location ?: return
         runCatching { requireFileName(name) }.onFailure { notice(it.message); return }
-        if (state.value.entries.any { it.name.equals(name, ignoreCase = true) }) { notice("같은 이름의 항목이 있어요."); return }
+        if (state.value.entries.any { it.name.equals(name, ignoreCase = true) }) { notice("같은 이름의 항목이 이미 있습니다."); return }
         enqueue("NEWFILE", emptyList(), folder.child(name))
     }
     fun renamePlan(template: String, find: String, replace: String, start: Int): RenamePlan =

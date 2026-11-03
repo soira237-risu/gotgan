@@ -182,7 +182,7 @@ fun ExplorerScreen(model: ExplorerViewModel, hasPermission: Boolean, settingsUna
     state.editor?.let { ConnectionDialog(it, model) }
     state.handoff?.let { handoff -> AlertDialog(onDismissRequest = {}, title = { Text(handoff.title) }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("‘${handoff.name}’을 준비하고 있어요.")
+            Text("‘${handoff.name}’을 준비하고 있습니다.")
             val total = handoff.total
             if (total != null && total > 0) LinearProgressIndicator({ (handoff.read.toFloat() / total).coerceIn(0f, 1f) }, Modifier.fillMaxWidth())
             else LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -503,12 +503,12 @@ private fun FolderStateView(state: ExplorerState, model: ExplorerViewModel, loca
         error != null -> when (val kind = errorKind(error)) {
             StateKind.PERMISSION -> StateMessage(kind, error, if (isLocalSource(location.sourceId)) StateAction("권한 설정 열기", "state-permission", onSettings) else retry, home)
             StateKind.AUTH -> StateMessage(kind, error, profile?.let { StateAction("다시 로그인", "state-login") { model.editConnection(it) } } ?: retry, home)
-            StateKind.CERTIFICATE -> StateMessage(kind, "$error 곳간은 인증서 예외를 허용하지 않아요.",
+            StateKind.CERTIFICATE -> StateMessage(kind, "$error 곳간은 인증서 예외를 허용하지 않습니다.",
                 profile?.let { StateAction("연결 정보 보기", "state-connection") { model.editConnection(it) } } ?: home, retry)
             else -> StateMessage(kind, error, retry, home)
         }
         state.query.isNotBlank() || state.kind != null || state.date != null || state.size != null -> StateMessage(StateKind.NO_MATCH, "다른 이름으로 다시 찾아보세요. 하위 폴더까지 찾으려면 ‘하위 폴더 포함 검색’을 누르세요.")
-        else -> StateMessage(StateKind.EMPTY, if (state.writable) "다른 위치에서 파일을 복사해 오거나 새 폴더를 만들 수 있어요." else "이 위치에 표시할 파일이 없어요.",
+        else -> StateMessage(StateKind.EMPTY, if (state.writable) "다른 위치에서 파일을 복사해 오거나 새 폴더를 만들 수 있습니다." else "이 위치에 표시할 파일이 없습니다.",
             if (state.writable) StateAction("새 폴더", "state-new-folder") { onCommand("새 폴더") } else null,
             if (!settings.showHidden) StateAction("숨긴 파일 보기") { model.updateSettings { it.copy(showHidden = true) } } else null)
     }

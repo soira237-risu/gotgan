@@ -28,7 +28,7 @@ internal fun BatchRenameDialog(model: ExplorerViewModel, dismiss: () -> Unit) {
     AlertDialog(onDismissRequest = dismiss, title = { Text("${plan.items.size}개 이름 변경") }, modifier = Modifier.testTag("batch-rename"), text = {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(template, { template = it }, Modifier.fillMaxWidth().testTag("batch-template"), singleLine = true,
-                label = { Text("이름 형식") }, supportingText = { Text("{name}은 원래 이름, {n}은 번호예요. 확장자는 그대로 둡니다.") })
+                label = { Text("이름 형식") }, supportingText = { Text("{name}은 원래 이름, {n}은 번호입니다. 확장자는 그대로 둡니다.") })
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(find, { find = it }, Modifier.weight(1f).testTag("batch-find"), singleLine = true, label = { Text("찾기") })
                 OutlinedTextField(replace, { replace = it }, Modifier.weight(1f).testTag("batch-replace"), singleLine = true, label = { Text("바꾸기") })

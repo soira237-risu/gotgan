@@ -35,7 +35,7 @@ internal fun ColumnScope.RecentFilesPanel(model: ExplorerViewModel, close: () ->
     if (current == null) { LinearProgressIndicator(Modifier.fillMaxWidth()); return }
     val items = if (tab == 0) current.first else current.second
     if (items.isEmpty()) {
-        Text(if (tab == 0) "곳간에서 연 파일이 여기에 모여요." else if (!explorer.hasPermission) "‘모든 파일 접근’ 권한을 허용하면 휴대폰에 새로 생긴 파일을 보여 드려요." else "최근에 생긴 파일이 없습니다.",
+        Text(if (tab == 0) "곳간에서 연 파일이 여기에 모입니다." else if (!explorer.hasPermission) "‘모든 파일 접근’ 권한을 허용하면 휴대폰에 새로 생긴 파일을 보여 드립니다." else "최근에 생긴 파일이 없습니다.",
             Modifier.padding(8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }

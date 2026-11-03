@@ -69,7 +69,7 @@ internal fun TaskSummary(model: ExplorerViewModel, openAll: () -> Unit) {
     val active = tasks.filter { taskTone(it.state) == StatusTone.ACTIVE }
     val recent = tasks.filter { taskTone(it.state) != StatusTone.ACTIVE }.take(3)
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (tasks.isEmpty()) Text("진행 중인 작업이 없어요.", Modifier.padding(4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (tasks.isEmpty()) Text("진행 중인 작업이 없습니다.", Modifier.padding(4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         (active + recent).take(5).forEach { task ->
             Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow, MaterialTheme.shapes.large).padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -101,7 +101,7 @@ internal fun TasksPanel(model: ExplorerViewModel) {
     var savingAs by remember { mutableStateOf<FileTask?>(null) }
     var saveName by remember { mutableStateOf("") }
     var saveError by remember { mutableStateOf<String?>(null) }
-    if (tasks.isEmpty()) Text("아직 작업이 없습니다. 복사·이동·휴지통 이동 같은 작업이 여기에 기록돼요.", Modifier.padding(start = 4.dp, top = 16.dp),
+    if (tasks.isEmpty()) Text("아직 작업이 없습니다. 복사·이동·휴지통 이동 같은 작업이 여기에 기록됩니다.", Modifier.padding(start = 4.dp, top = 16.dp),
         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)) {
         items(tasks, key = { it.id }) { task ->
@@ -170,7 +170,7 @@ internal fun TrashPanel(model: ExplorerViewModel) {
         PillButton("영구 삭제", { purge = selected.toList() }, enabled = selected.isNotEmpty())
         PillButton("비우기", { purge = items.map { it.id } }, enabled = items.isNotEmpty())
     }
-    if (items.isEmpty()) Text("휴지통이 비어 있습니다. 삭제한 파일은 여기에 보관되고 직접 비우기 전까지 남아 있어요.", Modifier.padding(start = 4.dp, top = 8.dp),
+    if (items.isEmpty()) Text("휴지통이 비어 있습니다. 삭제한 파일은 여기에 보관되고 직접 비우기 전까지 남아 있습니다.", Modifier.padding(start = 4.dp, top = 8.dp),
         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     else LazyColumn(Modifier.background(MaterialTheme.colorScheme.surfaceContainerLow, MaterialTheme.shapes.large), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) { items(items, key = { it.id }) { item ->
         val checked = item.id in selected
