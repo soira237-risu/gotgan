@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,18 +7,35 @@ plugins {
     id("org.jetbrains.kotlin.kapt")
 }
 
+// Release key: CI passes GOTGAN_KEYSTORE_* environment variables (README "Release signing");
+// a local build may use an untracked keystore.properties with the same four keys in lower camel case.
+val releaseKey: Map<String, String>? = run {
+    val local = rootProject.file("keystore.properties").takeIf { it.isFile }
+        ?.let { f -> Properties().apply { f.inputStream().use(::load) } }
+    fun value(env: String, prop: String) = System.getenv(env)?.takeIf { it.isNotBlank() } ?: local?.getProperty(prop)?.takeIf { it.isNotBlank() }
+    val entries = mapOf(
+        "storeFile" to value("GOTGAN_KEYSTORE_FILE", "storeFile"),
+        "storePassword" to value("GOTGAN_KEYSTORE_PASSWORD", "storePassword"),
+        "keyAlias" to value("GOTGAN_KEY_ALIAS", "keyAlias"),
+        "keyPassword" to value("GOTGAN_KEY_PASSWORD", "keyPassword"),
+    )
+    if (entries.values.all { it != null }) entries.mapValues { it.value!! } else null
+}
+val testsReleaseBuild = providers.gradleProperty("testBuildType").orNull == "release"
+
 android {
     namespace = "com.quickfiles.app"
     compileSdk = 36
     buildToolsVersion = "35.0.0"
-    testBuildType = providers.gradleProperty("testBuildType").getOrElse("debug")
+    testBuildType = if (testsReleaseBuild) "release" else "debug"
 
     defaultConfig {
         applicationId = "com.quickfiles.app"
         minSdk = 30
         targetSdk = 36
-        versionCode = 100
-        versionName = "1.0.0"
+        // The release workflow derives both from the vX.Y.Z tag; local builds keep the defaults.
+        versionCode = providers.gradleProperty("gotgan.versionCode").map(String::toInt).getOrElse(100)
+        versionName = providers.gradleProperty("gotgan.versionName").getOrElse("1.0.0")
         testInstrumentationRunner = "com.quickfiles.app.GotganTestRunner"
     }
 
@@ -28,14 +47,22 @@ android {
     signingConfigs {
         // The project's own key keeps installed builds updatable; a fresh clone falls back to the standard debug key.
         getByName("debug") { rootProject.file(".android/debug.keystore").takeIf { it.exists() }?.let { storeFile = it } }
+        if (releaseKey != null) create("release") {
+            storeFile = rootProject.file(releaseKey.getValue("storeFile"))
+            storePassword = releaseKey.getValue("storePassword")
+            keyAlias = releaseKey.getValue("keyAlias")
+            keyPassword = releaseKey.getValue("keyPassword")
+        }
     }
     buildTypes {
         getByName("release") {
             isDebuggable = false
-            // Personal release: keep the same callable code for on-device instrumentation.
-            // Debugging remains disabled; performance is measured on this exact distributed build.
-            isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            // R8 shrinks the distributed build. Instrumenting the release build itself (-PtestBuildType=release)
+            // keeps code unshrunk so the test APK can still call into the app.
+            isMinifyEnabled = !testsReleaseBuild
+            isShrinkResources = !testsReleaseBuild
+            // Without a release key the build stays installable over existing debug-key installs.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
