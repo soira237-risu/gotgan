@@ -622,6 +622,7 @@ private fun FileCell(entry: FileEntry, selected: Boolean, model: ExplorerViewMod
             Icon(icon, null, Modifier.size(if (grid) 44.dp else 28.dp),
                 tint = if (entry.isDirectory) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
             if (entry.isImage) Thumbnail(entry, model, Modifier.fillMaxSize()) { tile.image = it }
+            else if (entry.isVideo || entry.isAudio) MediaThumbnail(entry, model, Modifier.fillMaxSize())
             // Grid tiles mark selection on the thumbnail; list rows use the trailing check instead.
             AnimatedVisibility(selected && grid, modifier = Modifier.align(Alignment.TopEnd),
                 enter = fadeIn(MaterialMotion.settle()) + scaleIn(MaterialMotion.settle(), initialScale = .8f), exit = ExitTransition.None) {
@@ -652,6 +653,20 @@ private fun FileCell(entry: FileEntry, selected: Boolean, model: ExplorerViewMod
             selecting -> Box(Modifier.size(26.dp).border(1.8.dp, MaterialTheme.colorScheme.outline, CircleShape))
             entry.isDirectory -> Icon(Symbols.ChevronRight, null, Modifier.size(20.dp))
         } }
+}
+
+/** A video frame or embedded album art over the type icon; nothing is drawn when the file has neither. */
+@Composable
+private fun MediaThumbnail(entry: FileEntry, model: ExplorerViewModel, modifier: Modifier) {
+    var asset by remember(entry.id, entry.etag, entry.modified) { mutableStateOf<java.io.File?>(null) }
+    LaunchedEffect(entry.id, entry.etag, entry.modified) {
+        val provider = runCatching { model.provider(entry.location.sourceId) }.getOrNull() ?: return@LaunchedEffect
+        val local = provider is com.quickfiles.app.storage.LocalStorageProvider
+        if (!local && !model.graph.unmetered()) return@LaunchedEffect
+        asset = try { model.graph.thumbnailRequests.withPermit { model.graph.mediaThumbnails.thumbnail(provider, entry) } }
+            catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+    }
+    asset?.let { AsyncImage(it, null, imageLoader = model.graph.thumbnailLoader, modifier = modifier, contentScale = ContentScale.Crop) }
 }
 
 @Composable

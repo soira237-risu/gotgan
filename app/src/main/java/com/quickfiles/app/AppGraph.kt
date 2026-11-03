@@ -27,6 +27,9 @@ class AppGraph(context: Context, val repository: StorageRepository = StorageRepo
     // Default bitmap decoder keeps grid GIFs still; animated decoding belongs to the viewer.
     val thumbnailLoader = coil3.ImageLoader.Builder(app).build()
     val thumbnailRequests = kotlinx.coroutines.sync.Semaphore(2)
+    val mediaThumbnails = com.quickfiles.app.storage.MediaThumbnails(File(app.cacheDir, "media-thumbs"))
+    /** Remote video frames read up to [com.quickfiles.app.storage.MediaThumbnails.REMOTE_BUDGET] each, so they wait for an unmetered network. */
+    fun unmetered(): Boolean = app.getSystemService(android.net.ConnectivityManager::class.java)?.isActiveNetworkMetered == false
     val ready = scope.async { dao.recoverTasks() }
     val workspace = com.quickfiles.app.ui.WorkspaceController(this)
     /** Cache copies handed to apps that asked Gotgan to pick a file; pinned so eviction cannot pull them away mid-read. */
