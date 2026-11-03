@@ -68,11 +68,25 @@ internal fun imagePanBounds(viewport: Size, image: Size, zoom: Float): Offset {
 internal fun shouldDismissImage(dx: Float, dy: Float, velocityY: Float, density: Float): Boolean =
     dy > abs(dx) * 1.5f && (dy >= 120f * density || (dy >= 32f * density && velocityY >= 900f * density))
 
+/** A mostly sideways stroke turns the page: 1 for the next image (finger moved toward the start), -1 for the previous, 0 to stay.
+ * Distance alone decides as before; a quick flick in the same direction turns it from a shorter stroke. */
+internal fun imagePageTurn(dx: Float, dy: Float, velocityX: Float, density: Float): Int {
+    if (abs(dx) <= abs(dy) * 1.5f) return 0
+    val far = abs(dx) > 72f * density
+    val flung = abs(dx) >= 24f * density && abs(velocityX) >= 900f * density && (velocityX < 0) == (dx < 0)
+    return if (far || flung) (if (dx < 0) 1 else -1) else 0
+}
+
 @Composable
 internal fun AnimatedAssetImage(asset: Any, model: ExplorerViewModel, modifier: Modifier = Modifier,
     previous: (() -> Unit)? = null, next: (() -> Unit)? = null, onTap: (() -> Unit)? = null, onDismiss: ((Rect?) -> Unit)? = null,
-    onDismissDrag: ((Float) -> Unit)? = null, onShown: (() -> Unit)? = null, sourceName: String? = null) {
+    onDismissDrag: ((Float) -> Unit)? = null, onShown: (() -> Unit)? = null, sourceName: String? = null, enterFrom: Float = 0f) {
     var zoom by remember(asset) { mutableFloatStateOf(1f) }
+    // Sideways travel while a fitted image is dragged toward the next or previous one.
+    var swipe by remember(asset) { mutableFloatStateOf(0f) }
+    var turning by remember(asset) { mutableStateOf(false) }
+    // An image reached by paging slides in from the side it came from once it has decoded.
+    val entrance = remember(asset) { androidx.compose.animation.core.Animatable(if (enterFrom != 0f) 0f else 1f) }
     var pan by remember(asset) { mutableStateOf(Offset.Zero) }
     // 0..1 while pulling a fitted image down to close: it shrinks and the viewer fades with it.
     var pull by remember(asset) { mutableFloatStateOf(0f) }
@@ -87,11 +101,12 @@ internal fun AnimatedAssetImage(asset: Any, model: ExplorerViewModel, modifier: 
     val nextPage by rememberUpdatedState(next)
     fun transition(targetZoom: Float, targetPan: Offset, after: () -> Unit = {}) {
         animation?.cancel()
-        val startZoom = zoom; val startPan = pan; val startPull = pull
+        val startZoom = zoom; val startPan = pan; val startPull = pull; val startSwipe = swipe
         animation = scope.launch {
             animate(0f, 1f, animationSpec = MaterialMotion.enter()) { value, _ ->
                 zoom = startZoom + (targetZoom - startZoom) * value
                 pan = startPan + (targetPan - startPan) * value
+                swipe = startSwipe * (1f - value)
                 if (startPull > 0f) { pull = startPull * (1f - value); dismissDrag?.invoke(pull) }
             }
             after()
@@ -106,6 +121,20 @@ internal fun AnimatedAssetImage(asset: Any, model: ExplorerViewModel, modifier: 
         val scale = zoom * (1f - DISMISS_SHRINK * pull)
         return Rect(center - Offset(size.width, size.height) * (scale / 2), Size(size.width * scale, size.height * scale)).translate(pan)
     }
+    // The page carries on in the finger's direction and the neighbour opens once it has left.
+    fun turnPage(direction: Int, width: Float, page: () -> Unit) {
+        animation?.cancel()
+        turning = true
+        val start = swipe
+        animation = scope.launch {
+            animate(start, -direction * width, animationSpec = MaterialMotion.pageTurn()) { value, _ -> swipe = value }
+            page()
+            // Normally the next image replaces this one now; if it could not open, this one comes back.
+            turning = false
+            transition(1f, Offset.Zero)
+        }
+    }
+    LaunchedEffect(dimensions) { if (dimensions != Size.Zero && entrance.value < 1f) entrance.animateTo(1f, MaterialMotion.viewerEnter()) }
     DisposableEffect(asset) { onDispose { animation?.cancel() } }
     Box(modifier.clipToBounds().testTag("image-gesture-surface")
         .semantics {
@@ -123,11 +152,15 @@ internal fun AnimatedAssetImage(asset: Any, model: ExplorerViewModel, modifier: 
         .pointerInput(asset) {
             awaitEachGesture {
                 val first = awaitFirstDown(requireUnconsumed = false)
+                // A page already on its way out finishes; the next image takes the following touch.
+                if (turning) return@awaitEachGesture
                 animation?.cancel()
                 val tracker = VelocityTracker().apply { addPosition(first.uptimeMillis, first.position) }
                 var movement = Offset.Zero
                 var dragging = false
                 var multiTouch = false
+                // A fitted single-finger stroke commits to one axis: down closes the viewer, sideways turns the page.
+                var vertical: Boolean? = null
                 val startedAtFit = zoom <= 1.01f
                 do {
                     val event = awaitPointerEvent()
@@ -146,22 +179,34 @@ internal fun AnimatedAssetImage(asset: Any, model: ExplorerViewModel, modifier: 
                             val bounds = imagePanBounds(viewport, dimensions, newZoom)
                             pan = Offset(adjusted.x.coerceIn(-bounds.x, bounds.x), adjusted.y.coerceIn(-bounds.y, bounds.y))
                             zoom = newZoom
-                        } else if (dismiss != null && movement.y > abs(movement.x)) {
-                            pan = Offset(0f, movement.y.coerceAtLeast(0f))
-                            pull = (movement.y / (size.height * .5f)).coerceIn(0f, 1f)
-                            dismissDrag?.invoke(pull)
+                            swipe = 0f
+                        } else {
+                            if (vertical == null) vertical = when {
+                                dismiss != null && movement.y > abs(movement.x) -> true
+                                abs(movement.x) > abs(movement.y) -> false
+                                else -> null
+                            }
+                            if (vertical == true) {
+                                pan = Offset(0f, movement.y.coerceAtLeast(0f))
+                                pull = (movement.y / (size.height * .5f)).coerceIn(0f, 1f)
+                                dismissDrag?.invoke(pull)
+                            } else if (vertical == false) {
+                                // The image follows the finger; past the first or last image it only gives a little.
+                                val page = if (movement.x < 0) nextPage else previousPage
+                                swipe = if (page != null) movement.x else movement.x * .2f
+                            }
                         }
                         event.changes.forEach { it.consume() }
                     }
                 } while (event.changes.any { it.pressed })
                 if (dragging && startedAtFit && !multiTouch) {
+                    val velocity = tracker.calculateVelocity()
+                    val turn = if (vertical == false) imagePageTurn(movement.x, movement.y, velocity.x, density) else 0
+                    val page = when (turn) { 1 -> nextPage; -1 -> previousPage; else -> null }
                     when {
-                        dismiss != null && shouldDismissImage(movement.x, movement.y, tracker.calculateVelocity().y, density) ->
+                        vertical == true && dismiss != null && shouldDismissImage(movement.x, movement.y, velocity.y, density) ->
                             dismiss?.invoke(shownBounds(Size(size.width.toFloat(), size.height.toFloat())))
-                        abs(movement.x) > 72.dp.toPx() && abs(movement.x) > abs(movement.y) * 1.5f -> {
-                            transition(1f, Offset.Zero)
-                            if (movement.x < 0) nextPage?.invoke() else previousPage?.invoke()
-                        }
+                        page != null -> turnPage(turn, size.width.toFloat(), page)
                         else -> transition(1f, Offset.Zero)
                     }
                 }
@@ -180,7 +225,9 @@ internal fun AnimatedAssetImage(asset: Any, model: ExplorerViewModel, modifier: 
         }) {
         AsyncImage(asset, null, imageLoader = model.graph.imageLoader,
             modifier = Modifier.fillMaxSize().graphicsLayer {
-                scaleX = zoom * (1f - DISMISS_SHRINK * pull); scaleY = scaleX; translationX = pan.x; translationY = pan.y
+                scaleX = zoom * (1f - DISMISS_SHRINK * pull); scaleY = scaleX; translationY = pan.y
+                translationX = pan.x + swipe + enterFrom * (1f - entrance.value) * .25f * size.width
+                alpha = entrance.value * (1f - .5f * (abs(swipe) / size.width.coerceAtLeast(1f)).coerceIn(0f, 1f))
             }, contentScale = ContentScale.Fit,
             onSuccess = { dimensions = Size(it.result.image.width.toFloat(), it.result.image.height.toFloat()); error = false; onShown?.invoke() },
             onError = { error = true; onShown?.invoke() })
@@ -281,6 +328,13 @@ internal fun ImagePreviewScreen(preview: PreviewState, model: ExplorerViewModel,
     val backdrop = rememberBackdrop(Color.Black)
     // The thumbnail strip appears only while moving between images, then fades away.
     var stripVisible by remember { mutableStateOf(false) }
+    // Read before the effect below records this image: which side the previous one was on.
+    val enterFrom = remember(preview.entry.id) {
+        val images = model.state.value.entries.filter { it.isImage }
+        val from = images.indexOfFirst { it.id == model.lastViewedImageId }
+        val to = images.indexOfFirst { it.id == preview.entry.id }
+        if (from < 0 || to < 0 || from == to) 0f else if (to > from) 1f else -1f
+    }
     LaunchedEffect(preview.entry.id) {
         val previous = model.lastViewedImageId
         model.lastViewedImageId = preview.entry.id
@@ -303,7 +357,8 @@ internal fun ImagePreviewScreen(preview: PreviewState, model: ExplorerViewModel,
             asset != null -> AnimatedAssetImage(asset, model, Modifier.fillMaxSize().backdropSource(backdrop),
                 previous = preview.previous?.let { entry -> { model.open(entry) } },
                 next = preview.next?.let { entry -> { model.open(entry) } },
-                onTap = { immersive = !immersive }, onDismiss = onSwipedClosed, onDismissDrag = onDismissDrag, onShown = onShown, sourceName = preview.entry.name)
+                onTap = { immersive = !immersive }, onDismiss = onSwipedClosed, onDismissDrag = onDismissDrag, onShown = onShown, sourceName = preview.entry.name,
+                enterFrom = enterFrom)
         }
         // Tools float on neutral media glass over the black canvas; one tap hides them with the system bars.
         CompositionLocalProvider(LocalContentColor provides Color.White, LocalBackdrop provides backdrop) {

@@ -1,6 +1,11 @@
 package com.quickfiles.app.ui
 
 import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animate
 import androidx.compose.foundation.Image
@@ -25,6 +30,8 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -103,12 +110,12 @@ internal fun ImagePreviewTransition(preview: PreviewState, model: ExplorerViewMo
                     flight.snapTo(0f)
                     model.flightEntryId = preview.entry.id
                     content.snapTo(0f); backScale = 1f
-                    launch { backdrop.animateTo(0f, MaterialMotion.screenExit(250)) }
-                    flight.animateTo(1f, MaterialMotion.container(350))
+                    launch { backdrop.animateTo(0f, MaterialMotion.viewerExit()) }
+                    flight.animateTo(1f, MaterialMotion.containerClose())
                 } else {
                     flyer = null; rising = true
-                    launch { backdrop.animateTo(0f, MaterialMotion.screenExit()) }
-                    content.animateTo(0f, MaterialMotion.screenExit())
+                    launch { backdrop.animateTo(0f, MaterialMotion.viewerExit()) }
+                    content.animateTo(0f, MaterialMotion.viewerExit())
                 }
                 finish()
             }
@@ -121,8 +128,8 @@ internal fun ImagePreviewTransition(preview: PreviewState, model: ExplorerViewMo
                 if (start != null && end != null) {
                     flyer = start.second; from = start.first; to = end
                     model.flightEntryId = preview.entry.id
-                    launch { backdrop.animateTo(1f, MaterialMotion.screenEnter(300)) }
-                    flight.animateTo(1f, MaterialMotion.container())
+                    launch { backdrop.animateTo(1f, MaterialMotion.viewerEnter()) }
+                    flight.animateTo(1f, MaterialMotion.containerOpen())
                     content.animateTo(1f, MaterialMotion.state())
                     // The thumbnail stays under the viewer until the full image has drawn over it.
                     snapshotFlow { shown }.first { it }
@@ -130,8 +137,8 @@ internal fun ImagePreviewTransition(preview: PreviewState, model: ExplorerViewMo
                     if (model.flightEntryId == preview.entry.id) model.flightEntryId = null
                 } else {
                     shown = true; rising = true
-                    launch { backdrop.animateTo(1f, MaterialMotion.screenEnter(300)) }
-                    content.animateTo(1f, MaterialMotion.screenEnter(300))
+                    launch { backdrop.animateTo(1f, MaterialMotion.viewerEnter()) }
+                    content.animateTo(1f, MaterialMotion.viewerEnter())
                 }
             }
         }
@@ -174,5 +181,33 @@ internal fun ImagePreviewTransition(preview: PreviewState, model: ExplorerViewMo
                     onSwipedClosed = { rect -> close(rect) }, onDismissDrag = { pull = it }, onShown = { shown = true })
             }
         }
+    }
+}
+
+/** The text, PDF or archive viewer that is still leaving after its preview closed, and which pane it belongs to. */
+internal class LeavingDocument {
+    /** Set while the viewer is on screen, including its exit; read by the workspace to keep the viewer layout. */
+    var owner by mutableStateOf<Int?>(null)
+    var index: Int? = null
+    var preview: PreviewState? = null
+    var model: ExplorerViewModel? = null
+}
+
+/** Opening a document moves one level deeper like a folder: it comes in from the end edge and fades up over the list,
+ * and every way of closing it (button, back, cancel, trash) plays the reverse before it is removed.
+ * Images keep their own container transform in [ImagePreviewTransition]. */
+@Composable
+internal fun DocumentPreviewTransition(owner: Int?, preview: PreviewState?, model: ExplorerViewModel?, leaving: LeavingDocument) {
+    val live = preview?.takeUnless { it.entry.isImage }
+    if (live != null && owner != null && model != null) { leaving.preview = live; leaving.model = model; leaving.index = owner }
+    val shift = with(LocalDensity.current) { 28.dp.roundToPx() } * if (LocalLayoutDirection.current == LayoutDirection.Rtl) -1 else 1
+    AnimatedVisibility(live != null,
+        enter = fadeIn(MaterialMotion.viewerEnter()) + slideInHorizontally(MaterialMotion.viewerEnter()) { shift },
+        exit = fadeOut(MaterialMotion.viewerExit()) + slideOutHorizontally(MaterialMotion.viewerExit()) { shift }) {
+        SideEffect { leaving.owner = leaving.index }
+        DisposableEffect(Unit) { onDispose { leaving.owner = null } }
+        val shown = live ?: leaving.preview
+        val shownModel = leaving.model
+        if (shown != null && shownModel != null) key(shown.token) { PreviewScreen(shown, shownModel) }
     }
 }

@@ -81,7 +81,9 @@ internal fun TaskSummary(model: ExplorerViewModel, openAll: () -> Unit) {
                 StatusChip(taskStateLabel(task.state), taskTone(task.state))
             }
         }
-        PillButton("전체 작업 보기", openAll, Modifier.fillMaxWidth().testTag("task-summary-all"), primary = true)
+        // The summary sheet leaves the way it came before the full task panel slides in.
+        val dismissSheet = LocalSheetDismiss.current
+        PillButton("전체 작업 보기", { dismissSheet(openAll) }, Modifier.fillMaxWidth().testTag("task-summary-all"), primary = true)
     }
 }
 

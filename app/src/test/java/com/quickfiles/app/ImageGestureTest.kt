@@ -2,6 +2,7 @@ package com.quickfiles.app
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import com.quickfiles.app.ui.imagePageTurn
 import com.quickfiles.app.ui.imagePanBounds
 import com.quickfiles.app.ui.shouldDismissImage
 import org.junit.Assert.*
@@ -22,5 +23,19 @@ class ImageGestureTest {
         assertTrue(shouldDismissImage(5f, 35f, 1000f, 1f))
         assertFalse(shouldDismissImage(0f, 35f, 1000f, 3f))
         assertTrue(shouldDismissImage(15f, 105f, 3000f, 3f))
+    }
+    @Test fun pageTurnsNeedASidewaysStrokeAndAFlickCanBeShort() {
+        // Long sideways strokes turn as before: toward the start opens the next image.
+        assertEquals(1, imagePageTurn(-80f, 10f, 0f, 1f))
+        assertEquals(-1, imagePageTurn(80f, 10f, 0f, 1f))
+        // Short strokes stay unless flung the same way.
+        assertEquals(0, imagePageTurn(-40f, 0f, -300f, 1f))
+        assertEquals(1, imagePageTurn(-40f, 0f, -1200f, 1f))
+        assertEquals(0, imagePageTurn(-40f, 0f, 1200f, 1f))
+        assertEquals(0, imagePageTurn(-20f, 0f, -3000f, 1f))
+        // Diagonal strokes never turn, and thresholds scale with density.
+        assertEquals(0, imagePageTurn(-100f, 80f, -3000f, 1f))
+        assertEquals(0, imagePageTurn(-80f, 0f, 0f, 3f))
+        assertEquals(-1, imagePageTurn(230f, 0f, 0f, 3f))
     }
 }

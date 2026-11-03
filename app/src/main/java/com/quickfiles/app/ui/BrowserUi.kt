@@ -95,7 +95,10 @@ fun ExplorerScreen(model: ExplorerViewModel, hasPermission: Boolean, settingsUna
     var command by rememberSaveable { mutableStateOf<String?>(null) }
     val backProgress = remember { Animatable(0f) }
     var backDirection by remember { mutableFloatStateOf(1f) }
-    var transition by remember { mutableStateOf(FolderMotion.NONE) }
+    // The incoming folder keeps the direction it arrived from even if a newer change interrupts it,
+    // so turning back mid-entry carries on from where it is instead of jumping to the other side.
+    var enterMotion by remember { mutableStateOf(FolderMotion.NONE) }
+    var leaveMotion by remember { mutableStateOf(FolderMotion.NONE) }
     var predictiveBack by remember { mutableStateOf(false) }
     // Shared-axis folder change: the old folder (still drawn from its last state) steps aside, then the new one comes in.
     var enter by remember { mutableFloatStateOf(1f) }
@@ -113,26 +116,29 @@ fun ExplorerScreen(model: ExplorerViewModel, hasPermission: Boolean, settingsUna
     // A new input restarts this, carrying on from wherever the previous change had got to.
     LaunchedEffect(live.location) {
         if (live.location == shownLocation) {
-            // Back to this folder before it had finished leaving: it returns to place.
-            if (leave > 0f || dim < 1f) {
+            // Back to this folder before it had finished leaving (or even arriving): it returns to place.
+            if (leave > 0f || dim < 1f || enter < 1f) {
                 launch { animate(dim, 1f, animationSpec = MaterialMotion.state()) { value, _ -> dim = value } }
+                launch { animate(enter, 1f, animationSpec = MaterialMotion.folderEnter()) { value, _ -> enter = value } }
                 animate(leave, 0f, animationSpec = MaterialMotion.spatial()) { value, _ -> leave = value }
             }
             return@LaunchedEffect
         }
-        transition = folderMotion(shownLocation, live.location)
-        if (transition != FolderMotion.NONE) {
+        val motion = folderMotion(shownLocation, live.location)
+        leaveMotion = motion
+        if (motion != FolderMotion.NONE) {
             // A quick folder flips at once; a slow one dims the old list, then moves on to the loading state.
             if (model.state.value.loading) {
                 animate(dim, .55f, animationSpec = MaterialMotion.state()) { value, _ -> dim = value }
                 withTimeoutOrNull(250) { snapshotFlow { model.state.value.loading }.first { !it } }
             }
-            animate(leave, 1f, animationSpec = MaterialMotion.screenExit(100)) { value, _ -> leave = value }
+            animate(leave, 1f, animationSpec = MaterialMotion.folderExit()) { value, _ -> leave = value }
         }
         enter = 0f; leave = 0f; dim = 1f
         backProgress.snapTo(0f)
+        enterMotion = motion
         shownLocation = live.location
-        animate(0f, 1f, animationSpec = MaterialMotion.screenEnter(350)) { value, _ -> enter = value }
+        animate(0f, 1f, animationSpec = MaterialMotion.folderEnter()) { value, _ -> enter = value }
     }
     LaunchedEffect(hasPermission) { model.permissionChanged(hasPermission) }
     PredictiveBackHandler(active && (predictiveBack || state.location != null || state.preview != null || state.editor != null || state.searchOpen)) { events ->
@@ -157,10 +163,10 @@ fun ExplorerScreen(model: ExplorerViewModel, hasPermission: Boolean, settingsUna
     Box(Modifier.fillMaxSize()) {
         val logicalDirection = if (layoutDirection == LayoutDirection.Rtl) -1 else 1
         Column(Modifier.fillMaxSize().graphicsLayer {
-            val shift = if (transition == FolderMotion.REPLACE) 0f else transition.direction * logicalDirection * FOLDER_SHIFT_DP.dp.toPx()
-            translationX = shift * (1f - enter) - shift * leave + backDirection * backProgress.value * BACK_PEEK_DP.dp.toPx()
+            translationX = folderOffset(enterMotion, enter, leaveMotion, leave) * logicalDirection * FOLDER_SHIFT_DP.dp.toPx() +
+                backDirection * backProgress.value * BACK_PEEK_DP.dp.toPx()
             alpha = enter * (1f - leave) * dim * (1f - backProgress.value * .15f)
-            scaleX = (if (transition == FolderMotion.REPLACE) .96f + .04f * enter else 1f) * (1f - .03f * backProgress.value)
+            scaleX = (if (enterMotion == FolderMotion.REPLACE) .96f + .04f * enter else 1f) * (1f - .03f * backProgress.value)
             scaleY = scaleX
         }
             // While searching the header stays expanded so the field and type chips remain in reach.
@@ -588,7 +594,7 @@ private fun EntryCollection(entries: List<FileEntry>, state: ExplorerState, mode
                     scope.launch { model.graph.settings.update { it.copy(density = currentDensity.step(scale < 1f)) } }
                 })
             LazyVerticalGrid(GridCells.Fixed(columns), Modifier.fillMaxSize().then(gesture).testTag("folder-grid"), state = grid, contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 4.dp, bottom = bottomInset), horizontalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp), verticalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp)) {
-                items(entries, key = { it.id }, contentType = { if (it.isDirectory) "folder" else "file" }) { FileCell(it, it.id in state.selected, model, true, state.location?.path?.takeIf { _ -> state.searchResults != null }, square = columns > 1) { click(it) } }
+                items(entries, key = { it.id }, contentType = { if (it.isDirectory) "folder" else "file" }) { Box(Modifier.animateItem(fadeInSpec = MaterialMotion.effects(), placementSpec = MaterialMotion.spatial(), fadeOutSpec = MaterialMotion.effects())) { FileCell(it, it.id in state.selected, model, true, state.location?.path?.takeIf { _ -> state.searchResults != null }, square = columns > 1) { click(it) } } }
             }
         } else {
             val list = remember { LazyListState(position, anchor.offsetFor(layout)) }
@@ -615,7 +621,8 @@ private fun EntryCollection(entries: List<FileEntry>, state: ExplorerState, mode
                 apply = { ids, selecting -> model.paintSelection(ids, selecting, state) },
                 scroll = { list.scrollBy(it) })
             LazyColumn(Modifier.fillMaxSize().then(gesture).testTag("folder-list"), state = list, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = bottomInset)) {
-                items(entries, key = { it.id }, contentType = { if (it.isDirectory) "folder" else "file" }) { FileCell(it, it.id in state.selected, model, false, state.location?.path?.takeIf { _ -> state.searchResults != null }, listDensity = settings.listDensity, selecting = state.selected.isNotEmpty()) { click(it) } }
+                // Within one folder, renamed, added or removed entries glide and fade instead of jumping; a new folder or filter recreates the list above.
+                items(entries, key = { it.id }, contentType = { if (it.isDirectory) "folder" else "file" }) { Box(Modifier.animateItem(fadeInSpec = MaterialMotion.effects(), placementSpec = MaterialMotion.spatial(), fadeOutSpec = MaterialMotion.effects())) { FileCell(it, it.id in state.selected, model, false, state.location?.path?.takeIf { _ -> state.searchResults != null }, listDensity = settings.listDensity, selecting = state.selected.isNotEmpty()) { click(it) } } }
             }
         }
     }

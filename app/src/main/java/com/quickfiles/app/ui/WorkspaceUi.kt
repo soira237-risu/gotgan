@@ -69,6 +69,9 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
     val openPanel: (String) -> Unit = { if (it == "재생 중") context.startActivity(Intent(context, PlayerActivity::class.java)) else controller.panel(it) }
     val previewOwner = workspace.viewerOwner?.takeIf { states[it].preview != null } ?: states.indexOfFirst { it.preview != null }.takeIf { it >= 0 }
     LaunchedEffect(firstState.preview?.entry?.id, secondState.preview?.entry?.id) { controller.viewer(previewOwner) }
+    // A closed text, PDF or archive viewer stays on screen while it leaves, so the browser keeps its viewer layout until then.
+    val leavingDocument = remember { LeavingDocument() }
+    val viewerOwner = previewOwner ?: leavingDocument.owner
     val panelDepth = remember { mutableFloatStateOf(0f) }
     val towardStart = if (LocalLayoutDirection.current == LayoutDirection.Rtl) 1f else -1f
     // While a full panel comes in, this screen steps back a quarter of its width and dims slightly.
@@ -76,7 +79,7 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
         .graphicsLayer { translationX = .25f * size.width * panelDepth.floatValue * towardStart }
         .drawWithContent { drawContent(); if (panelDepth.floatValue > 0f) drawRect(Color.Black, alpha = .12f * panelDepth.floatValue) }
         .background(MaterialTheme.colorScheme.background)
-        .then(if (previewOwner == null) Modifier.safeDrawingPadding() else Modifier).imePadding()) {
+        .then(if (viewerOwner == null) Modifier.safeDrawingPadding() else Modifier).imePadding()) {
         val canSplit = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE && maxWidth >= 720.dp
         val split = canSplit && workspace.split
         if (workspace.ready) {
@@ -97,7 +100,7 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
             SideEffect { if (workspace.pending != null) lastPending = workspace.pending }
             // The panes are recorded once per frame so the floating dock can blur what scrolls beneath it.
             val backdrop = rememberBackdrop(MaterialTheme.colorScheme.background)
-            Box(Modifier.fillMaxSize().then(if (previewOwner != null) Modifier.safeDrawingPadding().clearAndSetSemantics {} else Modifier)) {
+            Box(Modifier.fillMaxSize().then(if (viewerOwner != null) Modifier.safeDrawingPadding().clearAndSetSemantics {} else Modifier)) {
                 Row(Modifier.fillMaxSize().backdropSource(backdrop)) {
                     models.forEachIndexed { index, model ->
                         if (split || index == workspace.active) Box(Modifier.weight(1f).fillMaxHeight()
@@ -191,7 +194,8 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                 }
                 }
             }
-            previewOwner?.let { owner -> states[owner].preview?.let { preview -> BackHandler(workspace.panel == null && !preview.entry.isImage) { models[owner].closePreview() }; PreviewScreen(preview, models[owner], backEnabled = workspace.panel == null) } }
+            previewOwner?.let { owner -> states[owner].preview?.let { preview -> BackHandler(workspace.panel == null && !preview.entry.isImage) { models[owner].closePreview() }; if (preview.entry.isImage) PreviewScreen(preview, models[owner], backEnabled = workspace.panel == null) } }
+            DocumentPreviewTransition(previewOwner, previewOwner?.let { states[it].preview }, previewOwner?.let { models[it] }, leavingDocument)
         }
         FileActions(state, active, command, { command = null })
         CompositionLocalProvider(LocalPanelDepth provides panelDepth) {
@@ -262,9 +266,9 @@ internal fun FullPanel(title: String, close: () -> Unit, content: @Composable Co
     fun dismiss() {
         if (closing) return
         closing = true
-        scope.launch { enter.animateTo(0f, MaterialMotion.screenExit(250)); closeRequest() }
+        scope.launch { enter.animateTo(0f, MaterialMotion.viewerExit()); closeRequest() }
     }
-    LaunchedEffect(Unit) { enter.animateTo(1f, MaterialMotion.screenEnter()) }
+    LaunchedEffect(Unit) { enter.animateTo(1f, MaterialMotion.viewerEnter()) }
     LaunchedEffect(depth) { snapshotFlow { enter.value * (1f - .3f * back) }.collect { depth?.floatValue = it } }
     DisposableEffect(depth) { onDispose { depth?.floatValue = 0f } }
     Dialog(onDismissRequest = ::dismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
@@ -316,7 +320,8 @@ private fun DestinationPanel(pending: PendingTransfer, model: ExplorerViewModel,
     WorkspaceSheet("${pending.count}개 ${pending.label}", onDismissRequest = collapse) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(pending.destination?.let { "${model.sourceName(it.sourceId)} / ${it.path}" } ?: "저장소를 선택해 주세요")
-            OutlinedButton(shape = MaterialTheme.shapes.small, onClick = choose, enabled = !pending.submitting) { Text("목적지 변경") }
+            val leaveSheet = LocalSheetDismiss.current
+            OutlinedButton(shape = MaterialTheme.shapes.small, onClick = { leaveSheet(choose) }, enabled = !pending.submitting) { Text("목적지 변경") }
             if (pending.archiveEntries != null) Text("새 폴더: ${pending.outputFolder}\n기존 파일은 덮어쓰지 않습니다.")
             else Text("같은 이름이 있을 때", style = MaterialTheme.typography.titleMedium)
             if (pending.archiveEntries == null) listOf(ConflictPolicy.SKIP to "건너뛰기 (기본)", ConflictPolicy.RENAME to "새 이름으로 보관", ConflictPolicy.REPLACE to "파일 교체 · 기존 파일은 휴지통 보관", ConflictPolicy.MERGE to "폴더 병합 · 같은 파일은 건너뛰기").forEach { (value, label) ->
