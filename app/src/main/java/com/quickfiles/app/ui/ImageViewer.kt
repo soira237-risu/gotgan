@@ -228,7 +228,7 @@ internal fun ViewerTrashAction(preview: PreviewState, model: ExplorerViewModel, 
     var confirm by remember(preview.entry.id) { mutableStateOf(false) }
     var submitting by remember(preview.entry.id) { mutableStateOf(false) }
     val canTrash = state.writable && preview.entry.accessError == null &&
-        (preview.entry.location.sourceId == LOCAL_SOURCE || preview.entry.revision.strongEtag != null)
+        (com.quickfiles.app.storage.isLocalSource(preview.entry.location.sourceId) || preview.entry.revision.strongEtag != null)
     if (overMedia) GlassIconButton(Symbols.Delete, "휴지통으로 이동", { confirm = true }, Modifier.testTag("viewer-trash"),
         enabled = canTrash && !submitting, colors = MediaGlass, tint = Color.White)
     else ToolIcon(Symbols.Delete, "휴지통으로 이동", { confirm = true }, enabled = canTrash && !submitting, modifier = Modifier.testTag("viewer-trash"))
