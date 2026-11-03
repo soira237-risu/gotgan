@@ -349,13 +349,18 @@ internal fun ViewControls(model: ExplorerViewModel, availableWidth: Float, state
     }
 }
 
-internal data class PlaceItem(val id: String, val title: String, val detail: String, val location: StorageLocation?, val profile: ConnectionProfile? = null)
+internal data class PlaceItem(val id: String, val title: String, val detail: String, val location: StorageLocation?, val profile: ConnectionProfile? = null, val volume: RemovableVolume? = null)
+
+internal fun volumePlace(volume: RemovableVolume) = PlaceItem(volume.sourceId, volume.name,
+    "${volume.kindLabel} · ${formatBytes(volume.freeBytes)} 남음 / ${formatBytes(volume.totalBytes)}${if (volume.readOnly) " · 읽기 전용" else ""}", StorageLocation(volume.sourceId), volume = volume)
 
 @Composable
 private fun StorageHome(state: ExplorerState, model: ExplorerViewModel, settingsUnavailable: Boolean, onSettings: () -> Unit, bottomInset: Dp) {
     val settings by model.settings.collectAsStateWithLifecycle()
     val places by model.places.collectAsStateWithLifecycle()
+    val volumes by model.volumes.collectAsStateWithLifecycle()
     var details by remember { mutableStateOf<ConnectionProfile?>(null) }
+    var volumeDetails by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf<ConnectionProfile?>(null) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val contentWidth = maxWidth.value - if (settings.grid) 16 else 32
@@ -365,8 +370,8 @@ private fun StorageHome(state: ExplorerState, model: ExplorerViewModel, settings
         Column {
             LazyVerticalGrid(GridCells.Fixed(columns), Modifier.fillMaxSize().testTag("storage-home"), contentPadding = PaddingValues(start = edge, end = edge, top = 4.dp, bottom = bottomInset), horizontalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp), verticalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp)) {
                 item(span = { GridItemSpan(maxLineSpan) }) { sectionTitle("저장소") }
-                val sources = listOf(PlaceItem("phone", "휴대폰 저장소", "다운로드 · 사진 · 문서", StorageLocation(LOCAL_SOURCE))) + state.profiles.map { PlaceItem(it.id, it.name, "WebDAV", StorageLocation(it.id), it) }
-                items(sources, key = { it.id }) { place -> PlaceCell(place, settings.grid, { model.navigate(place.location!!) }, { place.profile?.let { details = it } }, listDensity = settings.listDensity) }
+                val sources = listOf(PlaceItem("phone", "휴대폰 저장소", "다운로드 · 사진 · 문서", StorageLocation(LOCAL_SOURCE))) + volumes.map(::volumePlace) + state.profiles.map { PlaceItem(it.id, it.name, "WebDAV", StorageLocation(it.id), it) }
+                items(sources, key = { it.id }) { place -> PlaceCell(place, settings.grid, { model.navigate(place.location!!) }, { place.profile?.let { details = it }; place.volume?.let { volumeDetails = it.sourceId } }, listDensity = settings.listDensity) }
                 item { PlaceCell(PlaceItem("add", "저장소 추가", "WebDAV 연결", null), settings.grid,
                     { model.editConnection() }, {}, enabled = state.profilesReady, listDensity = settings.listDensity) }
                 if (!state.hasPermission || settingsUnavailable) item(span = { GridItemSpan(maxLineSpan) }) {
@@ -384,6 +389,7 @@ private fun StorageHome(state: ExplorerState, model: ExplorerViewModel, settings
         }
     }
     details?.let { profile -> AlertDialog(onDismissRequest = { details = null }, title = { Text(profile.name) }, text = { Column { Text(profile.url); Text(profile.username); TextButton(shape = MaterialTheme.shapes.small, onClick = { deleting = profile; details = null }) { Text("연결 삭제") } } }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { details = null; model.editConnection(profile) }) { Text("연결 수정") } }, dismissButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { details = null }) { Text("닫기") } }) }
+    volumeDetails?.let { id -> volumes.firstOrNull { it.sourceId == id }?.let { volume -> VolumeDialog(volume, { volumeDetails = null; model.navigate(StorageLocation(volume.sourceId)) }, { volumeDetails = null }) } ?: run { volumeDetails = null } }
     deleting?.let { profile -> AlertDialog(onDismissRequest = { deleting = null }, title = { Text("저장된 연결 삭제") }, text = { Text("‘${profile.name}’의 연결 정보와 캐시를 삭제합니다. NAS 파일은 유지됩니다.") }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { model.removeConnection(profile); deleting = null }) { Text("연결 삭제") } }, dismissButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { deleting = null }) { Text("취소") } }) }
 }
 
@@ -400,11 +406,12 @@ internal fun PlaceCell(place: PlaceItem, grid: Boolean, open: () -> Unit, detail
         if (grid) Column(Modifier.padding(GRID_SPACING_DP.dp)) {
             // Reserve the same header and text slots for every card, including Add.
             BoxWithConstraints(Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.CenterStart) {
-                if (place.profile != null && maxWidth < 88.dp) {
+                if ((place.profile != null || place.volume != null) && maxWidth < 88.dp) {
                     IconButton(onClick = detail, modifier = Modifier.size(48.dp).semantics { contentDescription = "${place.title} 연결 상세" }) { PlaceSymbol(place) }
                 } else Row(verticalAlignment = Alignment.CenterVertically) {
                     PlaceSymbol(place); Spacer(Modifier.weight(1f))
                     if (place.profile != null) ToolIcon(Symbols.MoreVert, "${place.title} 연결 상세", detail)
+                    if (place.volume != null) ToolIcon(Symbols.MoreVert, "${place.title} 저장소 관리", detail)
                 }
             }
             Spacer(Modifier.height(4.dp))
@@ -418,14 +425,37 @@ internal fun PlaceCell(place: PlaceItem, grid: Boolean, open: () -> Unit, detail
                 Text(place.detail, Modifier.height(detailHeight), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (place.profile != null) ToolIcon(Symbols.MoreVert, "${place.title} 연결 상세", detail)
+            if (place.volume != null) ToolIcon(Symbols.MoreVert, "${place.title} 저장소 관리", detail)
         }
     }
+}
+
+/** Capacity and the system-only actions (format, eject) for a removable volume. */
+@Composable
+private fun VolumeDialog(volume: RemovableVolume, open: () -> Unit, close: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var settingsFailed by remember { mutableStateOf(false) }
+    val used = (volume.totalBytes - volume.freeBytes).coerceAtLeast(0)
+    AlertDialog(onDismissRequest = close, title = { Text(volume.name) }, text = {
+        Column(Modifier.testTag("volume-details"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("${volume.kindLabel} · ${volume.directory.path}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            LinearProgressIndicator({ if (volume.totalBytes > 0) used.toFloat() / volume.totalBytes else 0f }, Modifier.fillMaxWidth())
+            Text("${formatBytes(used)} 사용 · ${formatBytes(volume.freeBytes)} 남음 / 전체 ${formatBytes(volume.totalBytes)}")
+            if (volume.readOnly) Text("읽기 전용으로 연결되어 파일을 넣거나 지울 수 없습니다.", style = MaterialTheme.typography.bodySmall)
+            HorizontalDivider()
+            Text("포맷과 안전하게 꺼내기는 Android 시스템만 할 수 있습니다. 아래 버튼으로 저장소 설정을 연 뒤 ‘${volume.name}’을 선택해 진행해 주세요. 포맷하면 저장소의 모든 파일이 지워집니다.", style = MaterialTheme.typography.bodySmall)
+            TextButton(shape = MaterialTheme.shapes.small, modifier = Modifier.testTag("volume-system-settings"),
+                onClick = { if (RemovableVolumes.openSystemStorageSettings(context)) close() else settingsFailed = true }) { Text("꺼내기 · 포맷 (시스템 설정)") }
+            if (settingsFailed) Text("시스템 저장소 설정을 열 수 없습니다. 설정 앱의 ‘저장공간’에서 직접 진행해 주세요.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+    }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = open) { Text("열기") } },
+        dismissButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = close) { Text("닫기") } })
 }
 
 @Composable
 private fun PlaceSymbol(place: PlaceItem) {
     Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape), contentAlignment = Alignment.Center) {
-        Icon(when { place.id == "add" -> Symbols.Add; place.profile != null -> Symbols.Dns; else -> Symbols.FolderFilled }, null,
+        Icon(when { place.id == "add" -> Symbols.Add; place.profile != null -> Symbols.Dns; place.volume != null -> Symbols.Usb; else -> Symbols.FolderFilled }, null,
             Modifier.size(26.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
     }
 }
@@ -439,7 +469,7 @@ private fun FolderStateView(state: ExplorerState, model: ExplorerViewModel, loca
     val profile = state.profiles.firstOrNull { it.id == location.sourceId }
     when {
         error != null -> when (val kind = errorKind(error)) {
-            StateKind.PERMISSION -> StateMessage(kind, error, if (location.sourceId == LOCAL_SOURCE) StateAction("권한 설정 열기", "state-permission", onSettings) else retry, home)
+            StateKind.PERMISSION -> StateMessage(kind, error, if (isLocalSource(location.sourceId)) StateAction("권한 설정 열기", "state-permission", onSettings) else retry, home)
             StateKind.AUTH -> StateMessage(kind, error, profile?.let { StateAction("다시 로그인", "state-login") { model.editConnection(it) } } ?: retry, home)
             StateKind.CERTIFICATE -> StateMessage(kind, "$error 곳간은 인증서 예외를 허용하지 않아요.",
                 profile?.let { StateAction("연결 정보 보기", "state-connection") { model.editConnection(it) } } ?: home, retry)
@@ -635,7 +665,7 @@ internal fun Thumbnail(entry: FileEntry, model: ExplorerViewModel, modifier: Mod
     LaunchedEffect(entry.id, entry.etag, entry.modified) {
         var lease: ContentCache.Lease? = null
         try {
-            if (entry.location.sourceId == LOCAL_SOURCE) lease = model.graph.cache.full(model.provider(entry.location.sourceId), entry, IMAGE_LIMIT)
+            if (isLocalSource(entry.location.sourceId)) lease = model.graph.cache.full(model.provider(entry.location.sourceId), entry, IMAGE_LIMIT)
             else model.graph.thumbnailRequests.withPermit { lease = model.graph.cache.full(model.provider(entry.location.sourceId), entry, IMAGE_LIMIT) }
             asset = lease?.file
             awaitCancellation()

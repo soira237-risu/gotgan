@@ -10,7 +10,7 @@ import kotlin.coroutines.coroutineContext
 
 class PreviewLoader(private val cache: PreviewCache) {
     suspend fun image(provider: StorageProvider, entry: FileEntry, progress: (Long, Long?) -> Unit): Bitmap = withContext(Dispatchers.IO) {
-        val cached: File? = if (entry.location.sourceId == LOCAL_SOURCE) null else cache.image(provider, entry, progress)
+        val cached: File? = if (isLocalSource(entry.location.sourceId)) null else cache.image(provider, entry, progress)
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         if (cached != null) BitmapFactory.decodeFile(cached.path, bounds)
         else provider.openRead(entry.location).use { BitmapFactory.decodeStream(it.stream, null, bounds) }
