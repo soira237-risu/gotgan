@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.quickfiles.app.playback.PlaybackState
@@ -65,13 +66,24 @@ internal fun ExpandedDock(dock: DockModel, actions: DockActions, running: Int, p
 @Composable
 private fun DockButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit, iconOnly: Boolean, selected: Boolean,
     modifier: Modifier = Modifier, ring: Float? = null) {
-    if (iconOnly) {
-        Box(modifier.size(48.dp).clip(CircleShape).then(if (selected) Modifier.background(LocalGlass.current.pill, CircleShape) else Modifier)
-            .clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = label }, contentAlignment = Alignment.Center) {
+    // One button that grows or folds its label, instead of swapping between two layouts when the dock slims down.
+    val showLabel = !iconOnly && LocalDensity.current.fontScale < 1.5f
+    val color = if (selected) MaterialTheme.colorScheme.primary else LocalContentColor.current
+    val iconSize by animateDpAsState(if (ring != null) 18.dp else if (showLabel) 24.dp else 22.dp, MaterialMotion.spatial(), label = "dock-icon")
+    Column(modifier.heightIn(min = 48.dp).widthIn(min = 48.dp).clip(CircleShape)
+        .then(if (selected) Modifier.background(LocalGlass.current.pill, CircleShape) else Modifier)
+        .clickable(role = Role.Button, onClick = onClick)
+        .semantics { this.selected = selected; if (!showLabel) contentDescription = label }
+        .padding(horizontal = 6.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Box(contentAlignment = Alignment.Center) {
             if (ring != null) ProgressRing(ring)
-            Icon(icon, null, Modifier.size(if (ring != null) 18.dp else 22.dp), tint = if (selected) MaterialTheme.colorScheme.primary else LocalContentColor.current)
+            Icon(icon, null, Modifier.size(iconSize), tint = color)
         }
-    } else BarItem(icon, label, onClick, modifier, selected = selected, badge = if (ring != null) {{ ProgressRing(ring, Modifier.align(Alignment.Center)) }} else null)
+        AnimatedVisibility(showLabel, enter = fadeIn(MaterialMotion.effects()) + expandVertically(MaterialMotion.spatial()),
+            exit = fadeOut(MaterialMotion.screenExit(100)) + shrinkVertically(MaterialMotion.spatial())) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
 }
 
 /** Current (●) and other (○) location names; the body opens the switcher, the ⇄ button swaps directly. */

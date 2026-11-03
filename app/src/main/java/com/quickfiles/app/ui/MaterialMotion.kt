@@ -39,6 +39,8 @@ internal object MaterialMotion {
     fun <T> containerClose(): TweenSpec<T> = container(450)
     /** An image leaving sideways before the next one opens. */
     fun <T> pageTurn(): TweenSpec<T> = tween(250, easing = accelerate)
+    /** Thumbnail cross-fade over the file-type icon (coil takes plain milliseconds). */
+    const val THUMBNAIL_FADE_MS = 200
     /** Floating glass that changes size or position: sheets, dock, mini player. Carries release velocity. */
     fun <T> spatial(): SpringSpec<T> = spring(dampingRatio = .9f, stiffness = 700f)
     fun <T> spatialFast(): SpringSpec<T> = spring(dampingRatio = .9f, stiffness = 1400f)

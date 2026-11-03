@@ -194,8 +194,8 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                 }
                 }
             }
-            previewOwner?.let { owner -> states[owner].preview?.let { preview -> BackHandler(workspace.panel == null && !preview.entry.isImage) { models[owner].closePreview() }; if (preview.entry.isImage) PreviewScreen(preview, models[owner], backEnabled = workspace.panel == null) } }
-            DocumentPreviewTransition(previewOwner, previewOwner?.let { states[it].preview }, previewOwner?.let { models[it] }, leavingDocument)
+            previewOwner?.let { owner -> states[owner].preview?.let { preview -> if (preview.entry.isImage) PreviewScreen(preview, models[owner], backEnabled = workspace.panel == null) } }
+            DocumentPreviewTransition(previewOwner, previewOwner?.let { states[it].preview }, previewOwner?.let { models[it] }, leavingDocument, backEnabled = workspace.panel == null)
             // Confirmations pass by above the dock (or the viewer's bottom edge) instead of asking for a tap.
             val snackbars = remember { SnackbarHostState() }
             states.forEachIndexed { index, folder -> folder.toast?.let { toast -> LaunchedEffect(index, toast.id) {

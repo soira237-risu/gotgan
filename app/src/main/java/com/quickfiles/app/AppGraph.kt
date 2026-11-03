@@ -1,5 +1,6 @@
 package com.quickfiles.app
 
+import coil3.request.crossfade
 import android.content.Context
 import com.quickfiles.app.data.*
 import com.quickfiles.app.operations.OperationEngine
@@ -27,7 +28,9 @@ class AppGraph(context: Context, val repository: StorageRepository = StorageRepo
         add(com.quickfiles.app.viewer.SniffingSvgDecoderFactory()); add(coil3.gif.AnimatedImageDecoder.Factory())
     }.build()
     // Default bitmap decoder keeps grid GIFs still; animated decoding belongs to the viewer.
-    val thumbnailLoader = coil3.ImageLoader.Builder(app).components { add(com.quickfiles.app.viewer.SniffingSvgDecoderFactory()) }.build()
+    // Thumbnails that arrive from disk or the network fade in over the type icon (memory-cache hits appear at once).
+    val thumbnailLoader = coil3.ImageLoader.Builder(app).components { add(com.quickfiles.app.viewer.SniffingSvgDecoderFactory()) }
+        .crossfade(com.quickfiles.app.ui.MaterialMotion.THUMBNAIL_FADE_MS).build()
     val thumbnailRequests = kotlinx.coroutines.sync.Semaphore(2)
     val mediaThumbnails = com.quickfiles.app.storage.MediaThumbnails(File(app.cacheDir, "media-thumbs"))
     /** Remote video frames read up to [com.quickfiles.app.storage.MediaThumbnails.REMOTE_BUDGET] each, so they wait for an unmetered network. */
