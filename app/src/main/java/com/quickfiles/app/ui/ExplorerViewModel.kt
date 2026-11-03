@@ -600,11 +600,21 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
     }
     fun saveSettings(value: ExplorerSettings) { viewModelScope.launch { graph.settings.save(value) } }
     fun refreshPlaces() { viewModelScope.launch { places.value = graph.dao.savedValues("favorite:%") + graph.dao.savedValues("recent:%", 12) } }
+    fun isFavorite(location: StorageLocation?) = location != null && places.value.any { it.key == "favorite:${location.key}" }
+    /** Drops a favorite or a recent location from the home screen; the folder itself is untouched. */
+    fun forgetPlace(key: String) {
+        viewModelScope.launch {
+            graph.dao.removeSaved(key)
+            refreshPlaces()
+            inform(if (key.startsWith("favorite:")) "즐겨찾기에서 뺐습니다." else "최근 위치에서 지웠습니다.")
+        }
+    }
     fun favorite() {
         val location = state.value.location ?: return
         viewModelScope.launch {
             val key = "favorite:${location.key}"
-            if (graph.dao.saved(key) != null) graph.dao.removeSaved(key) else graph.dao.save(SavedValue(key, location.encode()))
+            if (graph.dao.saved(key) != null) { graph.dao.removeSaved(key); inform("즐겨찾기에서 뺐습니다.") }
+            else { graph.dao.save(SavedValue(key, location.encode())); inform("즐겨찾기에 추가했습니다.") }
             refreshPlaces()
         }
     }

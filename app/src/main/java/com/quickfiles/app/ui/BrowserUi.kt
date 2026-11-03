@@ -201,7 +201,10 @@ internal fun ExplorerMenuItems(state: ExplorerState, model: ExplorerViewModel, o
         DropdownMenuItem({ Text("새 폴더") }, { close { onCommand("새 폴더") } }, enabled = state.writable, leadingIcon = { Icon(Symbols.CreateNewFolder, null) })
         DropdownMenuItem({ Text("새 파일") }, { close { onCommand("새 파일") } }, enabled = state.writable, modifier = Modifier.testTag("menu-new-file"), leadingIcon = { Icon(Symbols.NoteAdd, null) })
         if (!state.writable) Text("이 위치는 변경할 수 없습니다", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
-        DropdownMenuItem({ Text("즐겨찾기 추가/해제") }, { close { model.favorite() } }, leadingIcon = { Icon(Symbols.Star, null) })
+        val places by model.places.collectAsStateWithLifecycle()
+        val favorite = remember(places, state.location) { model.isFavorite(state.location) }
+        DropdownMenuItem({ Text(if (favorite) "즐겨찾기에서 빼기" else "즐겨찾기에 추가") }, { close { model.favorite() } }, modifier = Modifier.testTag("menu-favorite"),
+            leadingIcon = { Icon(if (favorite) Symbols.StarFilled else Symbols.Star, null) })
         DropdownMenuItem({ Text(if (settings.showHidden) "숨김 파일 감추기" else "숨김 파일 표시") }, { close { model.updateSettings { it.copy(showHidden = !it.showHidden) } } }, leadingIcon = { Icon(Symbols.Visibility, null) })
         DropdownMenuItem({ Text("새로고침") }, { close { model.navigate(state.location, refresh = true) } }, modifier = Modifier.testTag("refresh-folder"), leadingIcon = { Icon(Symbols.Refresh, null) })
         DropdownMenuItem({ Text("전체 선택") }, { close { model.selectAll() } }, enabled = state.entries.isNotEmpty(), leadingIcon = { Icon(Symbols.CheckCircle, null) })
@@ -415,7 +418,8 @@ private fun StorageHome(state: ExplorerState, model: ExplorerViewModel, settings
                     item(span = { GridItemSpan(maxLineSpan) }) { sectionTitle(title) }
                     val section = places.filter { it.key.startsWith(prefix) }.mapNotNull { place -> runCatching { decodeLocation(place.value) }.getOrNull()?.let { PlaceItem(place.key, it.path.substringAfterLast('/').ifEmpty { model.sourceName(it.sourceId) }, "${model.sourceName(it.sourceId)} / ${it.path}", it) } }
                     if (section.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { Text(if (prefix == "favorite:") "폴더 메뉴에서 즐겨찾기를 추가하세요." else "방문한 폴더가 여기에 표시됩니다.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
-                    items(section, key = { it.id }) { place -> PlaceCell(place, settings.grid, { model.navigate(place.location!!) }, {}, listDensity = settings.listDensity) }
+                    items(section, key = { it.id }) { place -> PlaceCell(place, settings.grid, { model.navigate(place.location!!) }, {}, listDensity = settings.listDensity,
+                        remove = { model.forgetPlace(place.id) }) }
                 }
             }
         }
@@ -426,7 +430,9 @@ private fun StorageHome(state: ExplorerState, model: ExplorerViewModel, settings
 }
 
 @Composable
-internal fun PlaceCell(place: PlaceItem, grid: Boolean, open: () -> Unit, detail: () -> Unit, enabled: Boolean = true, listDensity: ListDensity = ListDensity.COMPACT) {
+internal fun PlaceCell(place: PlaceItem, grid: Boolean, open: () -> Unit, detail: () -> Unit, enabled: Boolean = true, listDensity: ListDensity = ListDensity.COMPACT,
+    remove: (() -> Unit)? = null) {
+    val removeLabel = if (place.id.startsWith("favorite:")) "‘${place.title}’ 즐겨찾기에서 빼기" else "‘${place.title}’ 최근 위치에서 지우기"
     val titleStyle = if (grid) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge
     // minLines alone still varies with Korean/Latin fallback font metrics.
     val titleHeight = with(LocalDensity.current) { titleStyle.lineHeight.toDp() * if (grid) 1 else 2 }
@@ -444,6 +450,7 @@ internal fun PlaceCell(place: PlaceItem, grid: Boolean, open: () -> Unit, detail
                     PlaceSymbol(place); Spacer(Modifier.weight(1f))
                     if (place.profile != null) ToolIcon(Symbols.MoreVert, "${place.title} 연결 상세", detail)
                     if (place.volume != null) ToolIcon(Symbols.MoreVert, "${place.title} 저장소 관리", detail)
+                    remove?.let { ToolIcon(Symbols.Close, removeLabel, it) }
                 }
             }
             Spacer(Modifier.height(4.dp))
@@ -458,6 +465,7 @@ internal fun PlaceCell(place: PlaceItem, grid: Boolean, open: () -> Unit, detail
             }
             if (place.profile != null) ToolIcon(Symbols.MoreVert, "${place.title} 연결 상세", detail)
             if (place.volume != null) ToolIcon(Symbols.MoreVert, "${place.title} 저장소 관리", detail)
+            remove?.let { ToolIcon(Symbols.Close, removeLabel, it) }
         }
     }
 }
@@ -526,7 +534,7 @@ private fun FolderContent(state: ExplorerState, model: ExplorerViewModel, onSett
                 if (state.searchOpen) TextButton(shape = MaterialTheme.shapes.small, onClick = { model.recursiveSearch(state.searching) }) { Text(if (state.searching) "하위 검색 취소" else "하위 폴더 포함 검색") }
                 if (state.searching) LinearProgressIndicator(Modifier.fillMaxWidth())
                 when {
-                    state.loading -> LoadingState({ model.home() })
+                    state.loading -> LoadingState({ model.home() }, grid = state.gridOverride ?: settings.grid)
                     state.error != null || entries.isEmpty() -> FolderStateView(state, model, location, onSettings, onCommand)
                     else -> {
                         if (state.selected.isNotEmpty()) Text("드래그로 선택 · 양쪽 여백으로 스크롤", Modifier.padding(horizontal = 20.dp, vertical = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
