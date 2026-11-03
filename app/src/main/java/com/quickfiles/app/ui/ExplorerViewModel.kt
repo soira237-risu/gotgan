@@ -172,7 +172,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
 
     suspend fun provider(sourceId: String): StorageProvider = graph.repository.provider(sourceId)
 
-    fun sourceName(sourceId: String) = if (sourceId == LOCAL_SOURCE) "휴대폰 저장소" else if (sourceId == INBOX_SOURCE) "받은 파일" else state.value.profiles.firstOrNull { it.id == sourceId }?.name ?: "WebDAV"
+    fun sourceName(sourceId: String) = if (sourceId == LOCAL_SOURCE) "휴대폰 저장소" else if (sourceId == INBOX_SOURCE) "받은 파일" else state.value.profiles.firstOrNull { it.id == sourceId }?.name ?: "서버"
 
     fun navigate(location: StorageLocation, refresh: Boolean = false, restoredSort: SortOrder? = null, restoredIndex: Int = 0, restoredOffset: Int = 0, restoredDirection: SortDirection? = null, restoredAnchor: ViewportAnchor? = null) {
         rememberFolder()
@@ -467,7 +467,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             try {
                 require(edit.name.isNotBlank()) { "연결 이름을 입력해 주세요." }
                 require(edit.username.isNotBlank() && ':' !in edit.username && '\r' !in edit.username && '\n' !in edit.username) { "올바른 사용자 이름을 입력해 주세요." }
-                WebDavProvider.validatedUrl(edit.url)
+                validatedAddress(edit.url)
                 val password = if (edit.existing != null && edit.password.isEmpty()) store.password(edit.existing) else edit.password
                 if (save) {
                     edit.existing?.let { previous ->
@@ -485,8 +485,10 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                     if (state.value.editor?.token == edit.token) closeEditor()
                 } else {
                     val sourceId = edit.existing?.id ?: "connection-test"
-                    val entries = WebDavProvider(sourceId, edit.url, edit.username, password).list(StorageLocation(sourceId))
-                    if (state.value.editor?.token == edit.token) mutableState.update { it.copy(editor = it.editor?.copy(busy = false, result = "연결 성공 · 항목 ${entries.size}개")) }
+                    val provider = graph.repository.connect(sourceId, validatedAddress(edit.url), edit.username, password)
+                    val entries = try { provider.list(StorageLocation(sourceId)) } finally { (provider as? java.io.Closeable)?.close() }
+                    val key = (provider as? SftpProvider)?.newlyTrustedKey?.let { "\n처음 본 서버 키를 신뢰했습니다: $it" }.orEmpty()
+                    if (state.value.editor?.token == edit.token) mutableState.update { it.copy(editor = it.editor?.copy(busy = false, result = "연결 성공 · 항목 ${entries.size}개$key")) }
                 }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {

@@ -351,7 +351,7 @@ private fun DestinationPicker(model: ExplorerViewModel, initial: StorageLocation
             val width = maxWidth.value
             val columns = if (settings.grid) gridColumns(width, LocalDensity.current.fontScale, settings.density) else 1
             val places = remember(location, entries, state.profiles, settings.showHidden) {
-                if (location == null) listOf(PlaceItem(LOCAL_SOURCE, "휴대폰 저장소", "", StorageLocation(LOCAL_SOURCE))) + state.profiles.map { PlaceItem(it.id, it.name, "WebDAV", StorageLocation(it.id)) }
+                if (location == null) listOf(PlaceItem(LOCAL_SOURCE, "휴대폰 저장소", "", StorageLocation(LOCAL_SOURCE))) + state.profiles.map { PlaceItem(it.id, it.name, it.protocol.label, StorageLocation(it.id)) }
                 else entries.filter { settings.showHidden || !it.name.startsWith('.') }.map { PlaceItem(it.id, it.name, "", it.location) }
             }
             Column {

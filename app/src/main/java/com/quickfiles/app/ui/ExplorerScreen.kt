@@ -55,11 +55,12 @@ internal fun ConnectionDialog(edit: ConnectionEditor, model: ExplorerViewModel) 
     Dialog(onDismissRequest = { model.closeEditor() }) {
         Surface(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().heightIn(max = 720.dp)) {
             Column(Modifier.imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(if (edit.existing == null) "WebDAV 저장소 추가" else "WebDAV 연결 수정", style = MaterialTheme.typography.titleLarge)
-                Text("표준 HTTPS · 사용자 계정 인증", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (edit.existing == null) "서버 연결 추가" else "서버 연결 수정", style = MaterialTheme.typography.titleLarge)
+                Text("WebDAV(https://), Windows·NAS 공유(smb://서버/공유), SFTP(sftp://)를 지원합니다. SFTP는 처음 연결한 서버 키를 기억해 바뀌면 연결하지 않습니다.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(edit.name, { model.updateEditor(edit.copy(name = it)) }, label = { Text("연결 이름") }, singleLine = true, enabled = !edit.busy, modifier = Modifier.fillMaxWidth().testTag("connection-name"))
-                OutlinedTextField(edit.url, { model.updateEditor(edit.copy(url = it)) }, label = { Text("HTTPS 주소") }, placeholder = { Text("https://nas.example.com:5006/") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), enabled = !edit.busy, modifier = Modifier.fillMaxWidth().testTag("connection-url"))
-                OutlinedTextField(edit.username, { model.updateEditor(edit.copy(username = it)) }, label = { Text("사용자 이름") }, singleLine = true, enabled = !edit.busy, modifier = Modifier.fillMaxWidth().testTag("connection-user"))
+                OutlinedTextField(edit.url, { model.updateEditor(edit.copy(url = it)) }, label = { Text("서버 주소") }, placeholder = { Text("https://nas.example.com:5006/ · smb://nas.local/공유 · sftp://host/") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), enabled = !edit.busy, modifier = Modifier.fillMaxWidth().testTag("connection-url"))
+                OutlinedTextField(edit.username, { model.updateEditor(edit.copy(username = it)) }, label = { Text("사용자 이름") }, supportingText = { if (Protocol.of(edit.url) == Protocol.SMB) Text("도메인 계정은 도메인\\사용자 형식으로 입력합니다.") }, singleLine = true, enabled = !edit.busy, modifier = Modifier.fillMaxWidth().testTag("connection-user"))
                 OutlinedTextField(edit.password, { model.updateEditor(edit.copy(password = it)) }, label = { Text("비밀번호") }, supportingText = { if (edit.existing != null) Text("비워두면 기존 비밀번호를 유지합니다.") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), enabled = !edit.busy, modifier = Modifier.fillMaxWidth().testTag("connection-password"))
                 if (edit.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 edit.result?.let { Text(it, modifier = Modifier.testTag("connection-result"), style = MaterialTheme.typography.bodyMedium) }

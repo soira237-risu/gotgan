@@ -391,9 +391,9 @@ private fun StorageHome(state: ExplorerState, model: ExplorerViewModel, settings
         Column {
             LazyVerticalGrid(GridCells.Fixed(columns), Modifier.fillMaxSize().testTag("storage-home"), contentPadding = PaddingValues(start = edge, end = edge, top = 4.dp, bottom = bottomInset), horizontalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp), verticalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp)) {
                 item(span = { GridItemSpan(maxLineSpan) }) { sectionTitle("저장소") }
-                val sources = listOf(PlaceItem("phone", "휴대폰 저장소", "다운로드 · 사진 · 문서", StorageLocation(LOCAL_SOURCE))) + state.profiles.map { PlaceItem(it.id, it.name, "WebDAV", StorageLocation(it.id), it) }
+                val sources = listOf(PlaceItem("phone", "휴대폰 저장소", "다운로드 · 사진 · 문서", StorageLocation(LOCAL_SOURCE))) + state.profiles.map { PlaceItem(it.id, it.name, it.protocol.label, StorageLocation(it.id), it) }
                 items(sources, key = { it.id }) { place -> PlaceCell(place, settings.grid, { model.navigate(place.location!!) }, { place.profile?.let { details = it } }, listDensity = settings.listDensity) }
-                item { PlaceCell(PlaceItem("add", "저장소 추가", "WebDAV 연결", null), settings.grid,
+                item { PlaceCell(PlaceItem("add", "저장소 추가", "WebDAV · SMB · SFTP", null), settings.grid,
                     { model.editConnection() }, {}, enabled = state.profilesReady, listDensity = settings.listDensity) }
                 if (!state.hasPermission || settingsUnavailable) item(span = { GridItemSpan(maxLineSpan) }) {
                     Column { Text("휴대폰 파일을 보려면 접근 권한을 허용해 주세요. NAS는 바로 사용할 수 있습니다.", style = MaterialTheme.typography.bodyMedium); TextButton(shape = MaterialTheme.shapes.small, onClick = onSettings, modifier = Modifier.testTag("storage-permission")) { Text("파일 접근 허용") } }
