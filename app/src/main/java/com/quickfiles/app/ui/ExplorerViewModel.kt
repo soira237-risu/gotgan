@@ -41,6 +41,9 @@ data class PreviewState(
     val token: String = UUID.randomUUID().toString(),
 )
 
+/** A passing confirmation shown as a snackbar; [id] lets the same text show again. */
+data class Toast(val message: String, val id: Long = System.nanoTime())
+
 data class Handoff(val name: String, val read: Long = 0, val total: Long? = null, val title: String = "다른 앱으로 열기")
 
 /** An app asked Gotgan to pick files (ACTION_GET_CONTENT); tapping a matching file returns it instead of opening it. */
@@ -84,6 +87,8 @@ data class ExplorerState(
     val gridOverride: Boolean? = null,
     /** A file being fetched so another app can open it; null when idle. */
     val handoff: Handoff? = null,
+    /** A confirmation that needs no answer; errors and questions use [notice] instead. */
+    val toast: Toast? = null,
 )
 
 private data class FolderSnapshot(val entries: List<FileEntry>, val sort: SortOrder, val index: Int, val offset: Int, val direction: SortDirection, val anchor: ViewportAnchor)
@@ -155,7 +160,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                 folders.keys.filter { isVolumeSource(it.substringBefore(':')) && it.substringBefore(':') !in ids }.forEach { folders.remove(it) }
                 val location = state.value.location
                 if (location != null && isVolumeSource(location.sourceId) && location.sourceId !in ids) {
-                    home(); notice("이동식 저장소가 분리되어 저장소 목록으로 돌아왔습니다.")
+                    home(); inform("이동식 저장소가 분리되어 저장소 목록으로 돌아왔습니다.")
                 }
             }
         }
@@ -529,7 +534,11 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         }
     }
 
+    /** A problem or instruction the user must acknowledge: shown as a dialog. */
     fun notice(message: String?) { mutableState.update { it.copy(notice = message) } }
+    /** A confirmation that something worked: shown briefly as a snackbar above the dock. */
+    fun inform(message: String) { mutableState.update { it.copy(toast = Toast(message)) } }
+    fun toastShown(id: Long) { mutableState.update { if (it.toast?.id == id) it.copy(toast = null) else it } }
     fun visibleEntries(): List<FileEntry> = filters().let { filters ->
         val now = System.currentTimeMillis()
         (state.value.searchResults ?: state.value.entries).filter { (settings.value.showHidden || !it.name.startsWith('.')) && it.name.contains(state.value.query, ignoreCase = true) && filters.matches(it, now) }
@@ -642,7 +651,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             val destination = newName?.let { current.entry.location.parent()!!.child(it) } ?: current.entry.location
             graph.operations.enqueueText(bytes, destination, doc.revision, newName != null)
             TransferScheduler.schedule(getApplication(), !isLocalSource(destination.sourceId))
-            notice("저장 작업을 추가했습니다. ‘작업’에서 결과를 확인하세요.")
+            inform("저장 작업을 추가했습니다. ‘작업’에서 결과를 확인할 수 있습니다.")
             closePreview()
         } catch (e: CancellationException) { throw e }
         catch (e: java.nio.charset.CharacterCodingException) { notice("현재 인코딩으로 저장할 수 없는 문자가 있습니다. UTF-8 저장을 선택해 주세요.") }
@@ -666,7 +675,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
     fun copyPaths(entries: List<FileEntry> = selection()) {
         if (entries.isEmpty()) return
         copyText("경로", entries.joinToString("\n", transform = ::pathText))
-        notice(if (entries.size == 1) "경로를 복사했어요." else "경로 ${entries.size}개를 복사했어요.")
+        inform(if (entries.size == 1) "경로를 복사했습니다." else "경로 ${entries.size}개를 복사했습니다.")
     }
     fun copyText(label: String, text: String) {
         getApplication<Application>().getSystemService(android.content.ClipboardManager::class.java)
@@ -687,24 +696,51 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         val names = JSONObject().apply { plan.renames.forEach { put(it.entry.location.encode(), it.name) } }
         enqueue("RENAME", plan.renames.map { it.entry.location }, extra = JSONObject().put("names", names))
     }
+    /** Shares the selected files. Server files are fetched first under the same cancellable progress dialog as "open with". */
     fun shareSelected() {
         val selected = selection().filterNot { it.isDirectory }
-        viewModelScope.launch {
+        if (selected.isEmpty()) return
+        selected.firstOrNull { it.accessError != null }?.let { notice(it.accessError); return }
+        handing?.cancel()
+        val generation = ++handoffGeneration
+        val remote = selected.any { !isLocalSource(it.location.sourceId) && it.location.sourceId != INBOX_SOURCE }
+        val sizes = selected.map { it.size }
+        val total = if (sizes.all { it != null }) sizes.sumOf { it ?: 0L } else null
+        val label = selected.singleOrNull()?.name ?: "${selected.first().name} 외 ${selected.size - 1}개"
+        if (remote) mutableState.update { it.copy(handoff = Handoff(label, total = total, title = "공유 준비")) }
+        handing = viewModelScope.launch {
+            val leases = mutableListOf<ContentCache.Lease>()
             try {
-                sharing.forEach { it.close() }; sharing.clear()
                 val context = getApplication<Application>()
                 val uris = ArrayList<android.net.Uri>()
+                var done = 0L; var lastProgress = 0L
                 for (entry in selected) {
-                    val lease = graph.cache.full(provider(entry.location.sourceId), entry)
-                    sharing += lease
+                    val lease = graph.cache.full(provider(entry.location.sourceId), entry) { bytes, _ ->
+                        val now = System.nanoTime()
+                        if (remote && now - lastProgress >= 100_000_000) {
+                            lastProgress = now
+                            mutableState.update { if (generation == handoffGeneration) it.copy(handoff = it.handoff?.copy(read = done + bytes)) else it }
+                        }
+                    }
+                    leases += lease
+                    done += lease.file.length()
                     uris += androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", lease.file, entry.name)
                 }
-                if (uris.isEmpty()) return@launch
-                val intent = android.content.Intent(android.content.Intent.ACTION_SEND_MULTIPLE).setType("*/*").putParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, uris).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                if (generation != handoffGeneration) return@launch
+                // The previous share's copies stay pinned until now, in case its receiver was still reading them.
+                sharing.forEach { it.close() }; sharing.clear(); sharing += leases; leases.clear()
+                val type = MimeTypes.common(selected.map { MimeTypes.forName(it.name) })
+                val intent = if (uris.size == 1) android.content.Intent(android.content.Intent.ACTION_SEND).setType(type).putExtra(android.content.Intent.EXTRA_STREAM, uris.single())
+                    else android.content.Intent(android.content.Intent.ACTION_SEND_MULTIPLE).setType(type).putParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, uris)
+                intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 intent.clipData = android.content.ClipData.newUri(context.contentResolver, "선택한 파일", uris.first()).apply { uris.drop(1).forEach { addItem(android.content.ClipData.Item(it)) } }
                 context.startActivity(android.content.Intent.createChooser(intent, "파일 공유").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { notice(readableError(e)) }
+            catch (e: Exception) { DiagnosticLog.record("HANDOFF", "share", e); notice(readableError(e)) }
+            finally {
+                leases.forEach { it.close() }
+                if (generation == handoffGeneration) mutableState.update { it.copy(handoff = null) }
+            }
         }
     }
     /**

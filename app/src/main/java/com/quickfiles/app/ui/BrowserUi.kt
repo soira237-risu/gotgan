@@ -714,6 +714,8 @@ internal fun Thumbnail(entry: FileEntry, model: ExplorerViewModel, modifier: Mod
         var lease: ContentCache.Lease? = null
         try {
             if (isLocalSource(entry.location.sourceId)) lease = model.graph.cache.full(model.provider(entry.location.sourceId), entry, IMAGE_LIMIT)
+            // A server photo's thumbnail is the whole file, so on mobile data only photos already fetched get one, as video and music do.
+            else if (!model.graph.unmetered()) lease = model.graph.cache.cached(entry)
             else model.graph.thumbnailRequests.withPermit { lease = model.graph.cache.full(model.provider(entry.location.sourceId), entry, IMAGE_LIMIT) }
             asset = lease?.file
             awaitCancellation()

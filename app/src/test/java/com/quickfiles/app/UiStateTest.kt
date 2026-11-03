@@ -8,6 +8,32 @@ import org.junit.Test
 
 class UiStateTest {
     private fun entry(name: String, folder: Boolean = false, size: Long = 0) = FileEntry(StorageLocation(LOCAL_SOURCE, name), name, folder, size, size)
+    @Test fun namesSortByNumberValue() {
+        val names = listOf("IMG_10.jpg", "img_2.jpg", "IMG_1.jpg", "IMG_002.jpg", "IMG_02.jpg", "IMG_100.jpg", "IMG_9a.jpg", "IMG_9.jpg", "img", "IMG", "3화", "10화", "가나", "가")
+        val sorted = sortedEntries(names.map { entry(it) }, SortOrder.NAME).map { it.name }
+        assertEquals(listOf("3화", "10화", "IMG", "img", "IMG_1.jpg", "img_2.jpg", "IMG_02.jpg", "IMG_002.jpg", "IMG_9.jpg", "IMG_9a.jpg", "IMG_10.jpg", "IMG_100.jpg", "가", "가나"), sorted)
+        val descending = sortedEntries(names.map { entry(it) }, SortSpec(SortOrder.NAME, SortDirection.DESCENDING)).map { it.name }
+        assertEquals(sorted.reversed(), descending)
+        // Consistent with equality: every pair orders the same both ways.
+        for (a in names) for (b in names) assertEquals(Integer.signum(NaturalNameOrder.compare(a, b)), -Integer.signum(NaturalNameOrder.compare(b, a)))
+        // Very long digit runs must not overflow.
+        assertTrue(NaturalNameOrder.compare("x99999999999999999999999", "x100000000000000000000000") < 0)
+    }
+
+    @Test fun nameDialogExplainsProblemsAndSelectsTheBaseName() {
+        val taken = listOf("Report.pdf", "photos")
+        assertEquals("이름을 입력해 주세요.", fileNameProblem("  ", taken))
+        assertNotNull(fileNameProblem("a/b", taken)); assertNotNull(fileNameProblem("..", taken)); assertNotNull(fileNameProblem("a\u0001", taken))
+        assertEquals("같은 이름의 항목이 이미 있습니다.", fileNameProblem("report.PDF", taken))
+        assertNull("Renaming may change only the case of its own name", fileNameProblem("report.pdf", taken, current = "Report.pdf"))
+        assertNotNull("but not take a sibling's name", fileNameProblem("Photos", taken, current = "Report.pdf"))
+        assertNull(fileNameProblem("새 폴더", taken))
+        assertEquals(androidx.compose.ui.text.TextRange(0, 6), nameSelection("Report.pdf", folder = false))
+        assertEquals(androidx.compose.ui.text.TextRange(0, 11), nameSelection("archive.tar.gz", folder = false))
+        assertEquals(androidx.compose.ui.text.TextRange(0, 8), nameSelection(".gitkeep", folder = false))
+        assertEquals(androidx.compose.ui.text.TextRange(0, 7), nameSelection("v1.0.zz", folder = true))
+    }
+
     @Test fun everySortDirectionKeepsFoldersFirst() {
         val files = listOf(entry("z", true, 99), entry("b", false, 20), entry("a", false, 10), entry("c", true, 1))
         for (order in SortOrder.entries) for (direction in SortDirection.entries) {

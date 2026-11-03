@@ -41,6 +41,17 @@ class ContentCache(private val root: File, private val capacity: suspend () -> L
         if (dir.walkTopDown().any { pins.containsKey(it.absolutePath) }) throw StorageException(StorageError.BUSY, "이 저장소의 뷰어와 재생을 먼저 닫아 주세요.")
         dir.walkBottomUp().forEach { check(it.delete() || !it.exists()) }
     } }
+    /** The copy of [entry] already in the cache, without touching the network; null when there is none yet. */
+    suspend fun cached(entry: FileEntry): Lease? = withContext(Dispatchers.IO) {
+        if (entry.etag == null && entry.modified == null) return@withContext null
+        val file = File(directory(entry.location.sourceId), key(entry) + ".full")
+        mutex.withLock {
+            if (!file.exists()) return@withContext null
+            pin(file)
+        }
+        file.setLastModified(System.currentTimeMillis())
+        Lease(file) { unpin(file) }
+    }
     suspend fun full(provider: StorageProvider, supplied: FileEntry, maximum: Long = Long.MAX_VALUE, progress: (Long, Long?) -> Unit = { _, _ -> }): Lease = retryRead { withContext(Dispatchers.IO) {
         if (provider is LocalStorageProvider) return@withContext Lease(provider.fileForRead(supplied.location)) {}
         val entry = provider.stat(supplied.location)

@@ -22,6 +22,13 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -271,6 +278,9 @@ private fun ChecksumSection(entry: FileEntry, model: ExplorerViewModel) {
                 Text(if (isLocalSource(entry.location.sourceId) || entry.location.sourceId == INBOX_SOURCE) "체크섬 계산" else "체크섬 계산 (파일 전체를 내려받습니다)")
             }
             else -> {
+                // The copy button turns into a check for a moment; a dialog on top of this one would be too much.
+                var copied by remember { mutableStateOf<ChecksumKind?>(null) }
+                LaunchedEffect(copied) { if (copied != null) { kotlinx.coroutines.delay(1500); copied = null } }
                 ChecksumKind.entries.forEach { kind ->
                     val value = done.getValue(kind)
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -278,7 +288,10 @@ private fun ChecksumSection(entry: FileEntry, model: ExplorerViewModel) {
                             Text(kind.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(value, style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace), modifier = Modifier.testTag("checksum-${kind.name}"))
                         }
-                        IconButton({ model.copyText(kind.label, value); model.notice("${kind.label} 값을 복사했어요.") }) { Icon(Symbols.ContentCopy, "${kind.label} 복사") }
+                        IconButton({ model.copyText(kind.label, value); copied = kind }) {
+                            Icon(if (copied == kind) Symbols.Check else Symbols.ContentCopy, if (copied == kind) "${kind.label} 복사됨" else "${kind.label} 복사",
+                                tint = if (copied == kind) MaterialTheme.colorScheme.primary else LocalContentColor.current)
+                        }
                     }
                 }
                 OutlinedTextField(expected, { expected = it }, Modifier.fillMaxWidth().testTag("checksum-compare"), label = { Text("비교할 값 붙여넣기") }, singleLine = true)
@@ -293,29 +306,64 @@ private fun ChecksumSection(entry: FileEntry, model: ExplorerViewModel) {
     }
 }
 
+/** The part of a suggested name worth retyping: the name without its extension, or all of it for folders and dotfiles. */
+internal fun nameSelection(name: String, folder: Boolean): TextRange {
+    val dot = name.lastIndexOf('.')
+    return if (folder || dot <= 0) TextRange(0, name.length) else TextRange(0, dot)
+}
+
 @Composable
 internal fun FileActions(state: ExplorerState, model: ExplorerViewModel, command: String? = null, onConsumed: () -> Unit = {}) {
     var action by rememberSaveable { mutableStateOf<String?>(null) }
-    var name by rememberSaveable { mutableStateOf("") }
-    LaunchedEffect(command) { if (command != null) { action = command; name = when (command) { "이름 변경" -> model.selection().singleOrNull()?.name.orEmpty(); "ZIP 만들기" -> "Archive.zip"; "새 파일" -> "새 텍스트.txt"; else -> "" }; onConsumed() } }
+    var name by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue()) }
+    LaunchedEffect(command) { if (command != null) {
+        action = command
+        val target = model.selection().singleOrNull()
+        val suggested = when (command) { "이름 변경" -> target?.name.orEmpty(); "ZIP 만들기" -> "Archive.zip"; "새 파일" -> "새 텍스트.txt"; else -> "" }
+        name = TextFieldValue(suggested, nameSelection(suggested, command == "이름 변경" && target?.isDirectory == true))
+        onConsumed()
+    } }
     val selection = model.selection()
     if (action == "일괄 이름 변경") { BatchRenameDialog(model) { action = null }; return }
-    action?.let { title -> AlertDialog(onDismissRequest = { action = null }, title = { Text(title) }, text = {
-        Column(Modifier.verticalScroll(rememberScrollState())) {
+    action?.let { title ->
+        val naming = title != "휴지통으로 이동" && title != "파일 정보"
+        val renaming = selection.singleOrNull()?.takeIf { title == "이름 변경" }
+        val finalName = if (title == "ZIP 만들기" && !name.text.endsWith(".zip", true)) "${name.text}.zip" else name.text
+        val taken = remember(state.entries) { state.entries.map { it.name } }
+        val problem = if (naming) fileNameProblem(finalName, taken, renaming?.name) else null
+        // An empty field just opened is not an error yet; say so only after typing.
+        var touched by remember(title) { mutableStateOf(false) }
+        val ready = !naming || (problem == null && finalName != renaming?.name)
+        fun confirm() {
+            if (!ready) { touched = true; return }
             when (title) {
-                "휴지통으로 이동" -> Text("${selection.size}개 항목을 휴지통에 보관합니다. 복원할 수 있으며, 보관할 수 없으면 삭제하지 않습니다.")
-                "파일 정보" -> selection.singleOrNull()?.let { FileInfo(it, model) }
-                else -> OutlinedTextField(name, { name = it }, label = { Text("이름") }, singleLine = true)
+                "휴지통으로 이동" -> model.enqueue("TRASH")
+                "새 파일" -> model.newFile(finalName)
+                "새 폴더" -> model.enqueue("MKDIR", emptyList(), state.location!!.child(finalName))
+                "이름 변경" -> model.enqueue("RENAME", extra = JSONObject().put("name", finalName))
+                "ZIP 만들기" -> model.enqueue("ZIP", destination = state.location!!.child(finalName))
             }
+            action = null
         }
-    }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = {
-        when (title) {
-            "휴지통으로 이동" -> model.enqueue("TRASH")
-            "새 파일" -> model.newFile(name)
-            "새 폴더" -> runCatching { requireFileName(name); model.enqueue("MKDIR", emptyList(), state.location!!.child(name)) }.onFailure { model.notice(it.message) }
-            "이름 변경" -> runCatching { requireFileName(name); model.enqueue("RENAME", extra = JSONObject().put("name", name)) }.onFailure { model.notice(it.message) }
-            "ZIP 만들기" -> runCatching { requireFileName(name); model.enqueue("ZIP", destination = state.location!!.child(if (name.endsWith(".zip", true)) name else "$name.zip")) }.onFailure { model.notice(it.message) }
-        }
-        action = null
-    }) { Text(if (title == "파일 정보") "닫기" else "확인") } }, dismissButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { action = null }) { Text("취소") } }) }
+        val focus = remember { FocusRequester() }
+        if (naming) LaunchedEffect(title) { focus.requestFocus() }
+        AlertDialog(onDismissRequest = { action = null }, title = { Text(title) }, text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                when (title) {
+                    "휴지통으로 이동" -> Text("${selection.size}개 항목을 휴지통에 보관합니다. 복원할 수 있으며, 보관할 수 없으면 삭제하지 않습니다.")
+                    "파일 정보" -> selection.singleOrNull()?.let { FileInfo(it, model) }
+                    else -> {
+                        val shown = problem?.takeIf { touched || name.text.isNotEmpty() }
+                        OutlinedTextField(name, { name = it; touched = true }, label = { Text("이름") }, singleLine = true, isError = shown != null,
+                            supportingText = { Text(shown ?: if (title == "ZIP 만들기" && !name.text.endsWith(".zip", true) && name.text.isNotBlank()) "‘$finalName’으로 만듭니다." else "") },
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { confirm() }),
+                            modifier = Modifier.fillMaxWidth().focusRequester(focus).testTag("name-field"))
+                    }
+                }
+            }
+        }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = ::confirm, enabled = ready, modifier = Modifier.testTag("name-confirm")) {
+            Text(when (title) { "파일 정보" -> "닫기"; "휴지통으로 이동" -> "휴지통으로 이동"; "이름 변경" -> "바꾸기"; else -> "만들기" })
+        } }, dismissButton = { if (title != "파일 정보") TextButton(shape = MaterialTheme.shapes.small, onClick = { action = null }) { Text("취소") } })
+    }
 }
+
