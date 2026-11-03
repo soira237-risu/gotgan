@@ -20,13 +20,13 @@ open class GotganApplication : Application(), Configuration.Provider, AppGraphOw
 
     companion object {
         /** Reports live in app-private storage and leave the device only when the user shares one. */
-        fun crashLog(app: Application) = CrashLog(File(app.filesDir, "crash")) {
+        fun crashLog(app: Application) = CrashLog(File(app.filesDir, "crash"), header = {
             val info = runCatching { app.packageManager.getPackageInfo(app.packageName, 0) }.getOrNull()
             listOf(
                 "앱: ${info?.versionName ?: "?"} (${info?.longVersionCode ?: "?"})",
                 "기기: ${Build.MANUFACTURER} ${Build.MODEL}",
                 "Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
             )
-        }
+        })
     }
 }
