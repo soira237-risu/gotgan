@@ -240,6 +240,55 @@ private fun FileInfo(entry: FileEntry, model: ExplorerViewModel) {
     }
     Text("${entry.name}\n${model.sourceName(entry.location.sourceId)} / ${entry.location.path}\n$size\n${entry.modified?.let { time -> DateFormat.getDateTimeInstance().format(Date(time)) }.orEmpty()}",
         Modifier.testTag("file-info"))
+    if (!entry.isDirectory) ChecksumSection(entry, model)
+}
+
+/** MD5, SHA-1 and SHA-256 on request (a remote file is read in full), with a field to check a published value. */
+@Composable
+private fun ChecksumSection(entry: FileEntry, model: ExplorerViewModel) {
+    var running by remember(entry.id) { mutableStateOf(false) }
+    var read by remember(entry.id) { mutableStateOf(0L) }
+    var results by remember(entry.id) { mutableStateOf<Map<ChecksumKind, String>?>(null) }
+    var error by remember(entry.id) { mutableStateOf<String?>(null) }
+    var expected by rememberSaveable(entry.id) { mutableStateOf("") }
+    if (running) LaunchedEffect(entry.id) {
+        try { results = model.checksums(entry) { read = it }; error = null }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { error = readableError(e) }
+        finally { running = false }
+    }
+    Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        val done = results
+        when {
+            running -> {
+                val total = entry.size
+                if (total != null && total > 0) LinearProgressIndicator({ read.toFloat() / total }, Modifier.fillMaxWidth()) else LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text("체크섬 계산 중 · ${formatBytes(read)}${total?.let { " / ${formatBytes(it)}" }.orEmpty()}", style = MaterialTheme.typography.bodySmall)
+                TextButton(shape = MaterialTheme.shapes.small, onClick = { running = false }) { Text("중지") }
+            }
+            done == null -> OutlinedButton(shape = MaterialTheme.shapes.small, onClick = { read = 0; running = true }, modifier = Modifier.testTag("compute-checksums")) {
+                Text(if (entry.location.sourceId == LOCAL_SOURCE) "체크섬 계산" else "체크섬 계산 (파일 전체를 내려받습니다)")
+            }
+            else -> {
+                ChecksumKind.entries.forEach { kind ->
+                    val value = done.getValue(kind)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(kind.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(value, style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace), modifier = Modifier.testTag("checksum-${kind.name}"))
+                        }
+                        IconButton({ model.copyText(kind.label, value); model.notice("${kind.label} 값을 복사했어요.") }) { Icon(Symbols.ContentCopy, "${kind.label} 복사") }
+                    }
+                }
+                OutlinedTextField(expected, { expected = it }, Modifier.fillMaxWidth().testTag("checksum-compare"), label = { Text("비교할 값 붙여넣기") }, singleLine = true)
+                if (expected.isNotBlank()) {
+                    val match = Checksums.match(done, expected)
+                    Text(match?.let { "${it.label} 값과 일치합니다." } ?: "어떤 값과도 일치하지 않습니다.", modifier = Modifier.testTag("checksum-result"),
+                        color = if (match != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+        error?.let { Text("체크섬을 계산하지 못했습니다. $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+    }
 }
 
 @Composable

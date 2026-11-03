@@ -649,10 +649,15 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
     }
     fun copyPaths(entries: List<FileEntry> = selection()) {
         if (entries.isEmpty()) return
-        val clipboard = getApplication<Application>().getSystemService(android.content.ClipboardManager::class.java) ?: return
-        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("경로", entries.joinToString("\n", transform = ::pathText)))
+        copyText("경로", entries.joinToString("\n", transform = ::pathText))
         notice(if (entries.size == 1) "경로를 복사했어요." else "경로 ${entries.size}개를 복사했어요.")
     }
+    fun copyText(label: String, text: String) {
+        getApplication<Application>().getSystemService(android.content.ClipboardManager::class.java)
+            ?.setPrimaryClip(android.content.ClipData.newPlainText(label, text))
+    }
+    suspend fun checksums(entry: FileEntry, progress: (Long) -> Unit): Map<ChecksumKind, String> =
+        Checksums.compute(provider(entry.location.sourceId), entry, progress)
     fun newFile(name: String) {
         val folder = state.value.location ?: return
         runCatching { requireFileName(name) }.onFailure { notice(it.message); return }
