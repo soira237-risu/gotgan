@@ -37,6 +37,10 @@ jobs:
       - name: Unit tests, lint, debug APK
         run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --stacktrace
 
+      # Device tests need a phone or emulator to run, but they must at least keep compiling.
+      - name: Device test APK compiles
+        run: ./gradlew :app:assembleDebugAndroidTest --stacktrace
+
       - name: Test and lint reports
         if: always()
         uses: actions/upload-artifact@v4
