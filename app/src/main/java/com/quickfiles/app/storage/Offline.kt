@@ -17,7 +17,7 @@ import kotlin.coroutines.coroutineContext
 const val OFFLINE_SOURCE = "offline"
 
 /** Sources whose files are already on this phone: no network, no cache copy, no metered-data concerns. */
-fun isDeviceSource(sourceId: String) = isLocalSource(sourceId) || sourceId == INBOX_SOURCE || sourceId == OFFLINE_SOURCE
+fun isDeviceSource(sourceId: String) = isLocalSource(sourceId) || sourceId == INBOX_SOURCE || sourceId == OFFLINE_SOURCE || sourceId == VAULT_SOURCE
 
 /** A provider whose files are plain files on this phone, so readers can open them in place. */
 interface FileBackedProvider : StorageProvider {

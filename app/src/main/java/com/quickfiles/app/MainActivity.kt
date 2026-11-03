@@ -28,6 +28,7 @@ class MainActivity : ComponentActivity() {
     private var hasStorageAccess by mutableStateOf(false)
     private var settingsUnavailable by mutableStateOf(false)
     private lateinit var models: List<ExplorerViewModel>
+    private val ownerPrompt: (() -> Unit) -> Unit = { confirmOwner(it) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,6 +37,7 @@ class MainActivity : ComponentActivity() {
         models = listOf("A", "B").map { tab ->
             ViewModelProvider(this, viewModelFactory { initializer { ExplorerViewModel(application, createSavedStateHandle(), tab) } })[tab, ExplorerViewModel::class.java]
         }
+        models.forEach { it.unlocker = ownerPrompt }
         enableEdgeToEdge()
         setContent {
             GotganTheme {
@@ -54,6 +56,37 @@ class MainActivity : ComponentActivity() {
         preparePicker(intent)
         if (savedInstanceState == null) receive(intent)
         if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 100)
+    }
+
+    override fun onDestroy() {
+        // The models outlive this Activity; the prompt must not keep it alive.
+        models.forEach { if (it.unlocker === ownerPrompt) it.unlocker = null }
+        super.onDestroy()
+    }
+
+    /**
+     * Asks for a strong fingerprint/face or the screen lock before the vault opens. The vault key in the Keystore
+     * only works for a short while after this succeeds, so passing the prompt is what actually unlocks it.
+     */
+    private fun confirmOwner(onPassed: () -> Unit) {
+        val model = models[activeIndex()]
+        if (getSystemService(android.app.KeyguardManager::class.java)?.isDeviceSecure != true) {
+            model.notice("잠금 보관함을 쓰려면 먼저 휴대폰 설정에서 화면 잠금(PIN, 패턴 또는 비밀번호)을 설정해 주세요."); return
+        }
+        val authenticators = android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG or android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        val firstUse = !AppGraph.get(this).repository.vault.isSetUp
+        android.hardware.biometrics.BiometricPrompt.Builder(this)
+            .setTitle(if (firstUse) "잠금 보관함 만들기" else "잠금 보관함 열기")
+            .setSubtitle(if (firstUse) "보관함 파일은 이 휴대폰의 화면 잠금으로 암호화됩니다. 화면 잠금을 없애면 보관함을 열 수 없습니다." else "지문이나 화면 잠금으로 본인을 확인합니다.")
+            .setAllowedAuthenticators(authenticators)
+            .build()
+            .authenticate(android.os.CancellationSignal(), mainExecutor, object : android.hardware.biometrics.BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: android.hardware.biometrics.BiometricPrompt.AuthenticationResult) { onPassed() }
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    if (errorCode != android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED && errorCode != android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_CANCELED)
+                        model.notice("본인 확인을 하지 못했습니다. $errString")
+                }
+            })
     }
 
     override fun onNewIntent(intent: Intent) {

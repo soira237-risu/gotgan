@@ -211,6 +211,8 @@ internal fun ExplorerMenuItems(state: ExplorerState, model: ExplorerViewModel, o
         // Phone and USB folders can be mirrored to a server folder.
         if (isLocalSource(state.location.sourceId) && state.location.path.isNotEmpty())
             DropdownMenuItem({ Text("이 폴더 자동 백업") }, { close { onPanel("백업 위치") } }, modifier = Modifier.testTag("menu-auto-backup"), leadingIcon = { Icon(Symbols.Sync, null) })
+        if (state.location.sourceId == VAULT_SOURCE)
+            DropdownMenuItem({ Text("보관함 잠그기") }, { close { model.lockVault() } }, modifier = Modifier.testTag("menu-lock-vault"), leadingIcon = { Icon(Symbols.Lock, null) })
         DropdownMenuItem({ Text("홈 화면에 추가") }, { close { model.pinShortcut() } }, modifier = Modifier.testTag("menu-pin-shortcut"), leadingIcon = { Icon(Symbols.Home, null) })
         DropdownMenuItem({ Text("저장공간 분석") }, { close { model.analyze(); onPanel("저장공간 분석") } }, modifier = Modifier.testTag("analyze-storage"), leadingIcon = { Icon(Symbols.PieChart, null) })
         HorizontalDivider()
@@ -399,6 +401,7 @@ private fun StorageHome(state: ExplorerState, model: ExplorerViewModel, settings
     val places by model.places.collectAsStateWithLifecycle()
     val volumes by model.volumes.collectAsStateWithLifecycle()
     val kept by model.kept.collectAsStateWithLifecycle()
+    val vaultItems by model.vault.items.collectAsStateWithLifecycle()
     var details by remember { mutableStateOf<ConnectionProfile?>(null) }
     var volumeDetails by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf<ConnectionProfile?>(null) }
@@ -411,7 +414,8 @@ private fun StorageHome(state: ExplorerState, model: ExplorerViewModel, settings
             LazyVerticalGrid(GridCells.Fixed(columns), Modifier.fillMaxSize().testTag("storage-home"), contentPadding = PaddingValues(start = edge, end = edge, top = 4.dp, bottom = bottomInset), horizontalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp), verticalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp)) {
                 item(span = { GridItemSpan(maxLineSpan) }) { sectionTitle("저장소") }
                 val sources = listOf(PlaceItem("phone", "휴대폰 저장소", "다운로드 · 사진 · 문서", StorageLocation(LOCAL_SOURCE))) + volumes.map(::volumePlace) + state.profiles.map { PlaceItem(it.id, it.name, it.protocol.label, StorageLocation(it.id), it) } +
-                    (if (kept.isEmpty()) emptyList() else listOf(PlaceItem(OFFLINE_SOURCE, "기기에 보관한 파일", "${kept.size}개 · ${formatBytes(kept.values.sumOf { it.file.length() })} · 연결 없이 열기", StorageLocation(OFFLINE_SOURCE))))
+                    (if (kept.isEmpty()) emptyList() else listOf(PlaceItem(OFFLINE_SOURCE, "기기에 보관한 파일", "${kept.size}개 · ${formatBytes(kept.values.sumOf { it.file.length() })} · 연결 없이 열기", StorageLocation(OFFLINE_SOURCE)))) +
+                    PlaceItem(VAULT_SOURCE, "잠금 보관함", vaultItems?.let { "${it.size}개 · 열림 · 앱을 떠나면 잠깁니다" } ?: "지문이나 화면 잠금으로 열기", StorageLocation(VAULT_SOURCE))
                 items(sources, key = { it.id }) { place -> PlaceCell(place, settings.grid, { model.navigate(place.location!!) }, { place.profile?.let { details = it }; place.volume?.let { volumeDetails = it.sourceId } }, listDensity = settings.listDensity) }
                 item { PlaceCell(PlaceItem("add", "저장소 추가", "WebDAV · SMB · SFTP", null), settings.grid,
                     { model.editConnection() }, {}, enabled = state.profilesReady, listDensity = settings.listDensity) }
@@ -501,7 +505,7 @@ private fun VolumeDialog(volume: RemovableVolume, open: () -> Unit, close: () ->
 @Composable
 private fun PlaceSymbol(place: PlaceItem) {
     Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape), contentAlignment = Alignment.Center) {
-        Icon(when { place.id == "add" -> Symbols.Add; place.profile != null -> Symbols.Dns; place.volume != null -> Symbols.Usb; place.id == OFFLINE_SOURCE -> Symbols.Inventory2; else -> Symbols.FolderFilled }, null,
+        Icon(when { place.id == "add" -> Symbols.Add; place.profile != null -> Symbols.Dns; place.volume != null -> Symbols.Usb; place.id == OFFLINE_SOURCE -> Symbols.Inventory2; place.id == VAULT_SOURCE -> Symbols.Lock; else -> Symbols.FolderFilled }, null,
             Modifier.size(26.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
     }
 }

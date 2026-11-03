@@ -155,6 +155,16 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         }
         refreshPlaces()
         viewModelScope.launch {
+            // Locking (by hand, or after the app has been away) closes whatever was open from the vault.
+            vault.items.collect { items ->
+                if (items != null) return@collect
+                folders.keys.filter { it.substringBefore(':') == VAULT_SOURCE }.forEach { folders.remove(it) }
+                if (state.value.location?.sourceId == VAULT_SOURCE || state.value.preview?.entry?.location?.sourceId == VAULT_SOURCE) {
+                    home(); inform("잠금 보관함을 잠갔습니다.")
+                }
+            }
+        }
+        viewModelScope.launch {
             volumes.collect { mounted ->
                 val ids = mounted.mapTo(HashSet()) { it.sourceId }
                 folders.keys.filter { isVolumeSource(it.substringBefore(':')) && it.substringBefore(':') !in ids }.forEach { folders.remove(it) }
@@ -174,7 +184,8 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                         val source = saved.get<String>("source") ?: persisted?.optString("source")
                         if (!source.isNullOrBlank()) {
                             val location = runCatching { StorageLocation(source!!, saved["path"] ?: persisted?.optString("path").orEmpty()) }.getOrNull()
-                            if (location != null) {
+                            // A tab left in the vault comes back at home rather than asking for a fingerprint at launch.
+                            if (location != null && location.sourceId != VAULT_SOURCE) {
                                 val sort = runCatching { SortOrder.valueOf(saved["sort"] ?: persisted?.optString("sort", "NAME") ?: "NAME") }.getOrDefault(SortOrder.NAME)
                                 val index = saved.get<Int>("index") ?: persisted?.optInt("index") ?: 0
                                 val offset = saved.get<Int>("offset") ?: persisted?.optInt("offset") ?: 0
@@ -206,10 +217,13 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
     fun sourceName(sourceId: String) = if (sourceId == LOCAL_SOURCE) "휴대폰 저장소"
         else if (sourceId == INBOX_SOURCE) "받은 파일"
         else if (sourceId == OFFLINE_SOURCE) "기기에 보관한 파일"
+        else if (sourceId == VAULT_SOURCE) "잠금 보관함"
         else if (isVolumeSource(sourceId)) graph.repository.volumes.volume(sourceId)?.name ?: "이동식 저장소 (분리됨)"
         else state.value.profiles.firstOrNull { it.id == sourceId }?.name ?: "서버"
 
     fun navigate(location: StorageLocation, refresh: Boolean = false, restoredSort: SortOrder? = null, restoredIndex: Int = 0, restoredOffset: Int = 0, restoredDirection: SortDirection? = null, restoredAnchor: ViewportAnchor? = null) {
+        // Every way into the vault (home, favorites, shortcuts) asks for the fingerprint or screen lock first.
+        if (location.sourceId == VAULT_SOURCE && !vault.isUnlocked) { openVault(location); return }
         rememberFolder()
         searching?.cancel(); searchGeneration++; searchReturn = null
         closePreview()
@@ -227,7 +241,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             index = index, offset = offset, direction = direction, anchor = anchor, searchOpen = false, viewportEpoch = it.viewportEpoch + 1, loading = !canUseCache, error = null, selected = emptySet(), query = "", searchResults = null, searching = false, kind = null, date = null, size = null,
             gridOverride = if (it.location == location) it.gridOverride else null, writable = !isLocalSource(location.sourceId) || it.hasPermission) }
         savePosition()
-        viewModelScope.launch { graph.dao.save(SavedValue("recent:${location.key}", location.encode())); refreshPlaces() }
+        if (location.sourceId != VAULT_SOURCE) viewModelScope.launch { graph.dao.save(SavedValue("recent:${location.key}", location.encode())); refreshPlaces() }
         viewModelScope.launch {
             val remembered = graph.dao.saved(viewKey(location))?.value?.let { it == "grid" }
             if (state.value.location == location) mutableState.update { it.copy(gridOverride = remembered) }
@@ -848,6 +862,122 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             state.value.location?.takeIf { it.sourceId == OFFLINE_SOURCE }?.let { navigate(it, refresh = true) }
         }
     }
+    val vault get() = graph.repository.vault
+    /** Set by the Activity: shows the fingerprint / screen-lock prompt and runs the callback once the user passes it. */
+    var unlocker: ((onPassed: () -> Unit) -> Unit)? = null
+    private var unlocking: Job? = null
+
+    /** Runs [block] with the vault unlocked, asking the user to prove who they are first if it is locked. */
+    private fun withVault(block: suspend () -> Unit) {
+        if (vault.isUnlocked) { viewModelScope.launch { block() }; return }
+        val ask = unlocker ?: run { notice("잠금 보관함은 곳간 화면에서만 열 수 있습니다."); return }
+        ask {
+            unlocking?.cancel()
+            unlocking = viewModelScope.launch {
+                try { vault.unlock() } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { DiagnosticLog.record("VAULT", "unlock", e); notice(readableError(e)); return@launch }
+                block()
+            }
+        }
+    }
+    /** Opens the vault, asking for the fingerprint or screen lock when it is locked. */
+    fun openVault(location: StorageLocation = StorageLocation(VAULT_SOURCE)) = withVault { navigate(location) }
+    fun lockVault() { vault.lock() }
+
+    /** Shows a vault operation under the cancellable progress dialog and returns its job. */
+    private fun vaultTask(title: String, files: List<FileEntry>, work: suspend (report: (Long) -> Unit) -> Unit) {
+        handing?.cancel()
+        val generation = ++handoffGeneration
+        val sizes = files.map { it.size }
+        val total = if (sizes.all { it != null }) sizes.sumOf { it ?: 0L } else null
+        val label = files.singleOrNull()?.name ?: "${files.first().name} 외 ${files.size - 1}개"
+        mutableState.update { it.copy(handoff = Handoff(label, total = total, title = title)) }
+        handing = viewModelScope.launch {
+            var lastProgress = 0L
+            try {
+                work { bytes ->
+                    val now = System.nanoTime()
+                    if (now - lastProgress >= 100_000_000) {
+                        lastProgress = now
+                        mutableState.update { if (generation == handoffGeneration) it.copy(handoff = it.handoff?.copy(read = bytes)) else it }
+                    }
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { DiagnosticLog.record("VAULT", title, e); notice(readableError(e)) }
+            finally {
+                if (generation == handoffGeneration) mutableState.update { it.copy(handoff = null) }
+                state.value.location?.let { navigate(it, refresh = true) }
+            }
+        }
+    }
+
+    /**
+     * Encrypts phone files into the vault, then deletes each original. An original is removed only after its
+     * encrypted copy has been read back and verified, and only if it has not changed since it was listed.
+     */
+    fun moveToVault(entries: List<FileEntry> = selection()) {
+        val files = entries.filter { !it.isDirectory && isLocalSource(it.location.sourceId) && it.accessError == null }
+        if (files.isEmpty()) return
+        withVault {
+            vaultTask("잠금 보관함으로 이동", files) { report ->
+                var done = 0L; var moved = 0
+                for (entry in files) {
+                    val source = provider(entry.location.sourceId) as? WritableStorageProvider
+                        ?: throw StorageException(StorageError.UNSUPPORTED, "이 위치의 파일은 옮길 수 없습니다.")
+                    val item = vault.add(source, entry) { report(done + it) }
+                    try { source.delete(entry.location, entry.revision) }
+                    catch (e: CancellationException) { throw e }
+                    catch (e: Exception) {
+                        throw StorageException(StorageError.CONFLICT, "‘${entry.name}’을 보관함에 넣었지만 원본을 지우지 못했습니다. 원본을 확인해 주세요. (${readableError(e)})", e)
+                    }
+                    done += item.size; moved++
+                }
+                clearSelection()
+                inform(if (moved == 1) "‘${files.single().name}’을 잠금 보관함으로 옮겼습니다." else "${moved}개 파일을 잠금 보관함으로 옮겼습니다.")
+            }
+        }
+    }
+
+    /** Decrypts vault files back to their original folder (or Download when it is gone) and removes them from the vault. */
+    fun takeOutOfVault(entries: List<FileEntry> = selection()) {
+        val files = entries.filter { it.location.sourceId == VAULT_SOURCE && !it.isDirectory }
+        if (files.isEmpty()) return
+        withVault {
+            vaultTask("보관함에서 꺼내기", files) { report ->
+                var done = 0L; val places = mutableSetOf<String>()
+                val phone = provider(LOCAL_SOURCE) as WritableStorageProvider
+                for (entry in files) {
+                    val item = vault.item(entry.location) ?: throw StorageException(StorageError.NOT_FOUND, "보관함에서 ‘${entry.name}’을 찾을 수 없습니다.")
+                    val origin = item.origin?.parent()?.takeIf { it.sourceId == LOCAL_SOURCE }
+                    val folder = origin?.takeIf { runCatching { phone.find(it)?.isDirectory == true }.getOrDefault(false) } ?: StorageLocation(LOCAL_SOURCE, Environment.DIRECTORY_DOWNLOADS)
+                    var target = folder.child(item.name)
+                    if (phone.find(target) != null) target = OperationEngine.uniqueName(phone, target)
+                    val plain = vault.open(item)
+                    phone.put(target, plain.length(), { plain.inputStream() }, createOnly = true) { report(done + it) }
+                    vault.delete(listOf(item))
+                    done += item.size; places += folder.path.ifEmpty { "휴대폰 저장소" }
+                }
+                clearSelection()
+                inform("${if (files.size == 1) "‘${files.single().name}’을" else "${files.size}개 파일을"} ${places.singleOrNull()?.let { "‘$it’ 폴더로" } ?: "원래 폴더로"} 꺼냈습니다.")
+            }
+        }
+    }
+
+    /** Deletes vault files for good; there is no trash for them. */
+    fun deleteFromVault(entries: List<FileEntry> = selection()) {
+        val files = entries.filter { it.location.sourceId == VAULT_SOURCE }
+        if (files.isEmpty()) return
+        withVault {
+            try {
+                vault.delete(files.mapNotNull { vault.item(it.location) })
+                clearSelection()
+                inform(if (files.size == 1) "‘${files.single().name}’을 영구 삭제했습니다." else "${files.size}개 파일을 영구 삭제했습니다.")
+                state.value.location?.let { navigate(it, refresh = true) }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { notice(readableError(e)) }
+        }
+    }
+
     /**
      * Opens one file in another app through ACTION_VIEW. Remote files are fetched into the cache first;
      * the lease stays pinned until the next hand-off so the receiving app can keep reading it.

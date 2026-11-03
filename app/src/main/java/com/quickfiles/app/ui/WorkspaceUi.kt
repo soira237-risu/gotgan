@@ -174,6 +174,13 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                                                     if (origins.all { it!!.key in keptNow }) DropdownMenuItem({ Text("기기 보관 해제") }, { active.forgetOffline(selection); selectionMenu = false }, modifier = Modifier.testTag("menu-forget-offline"))
                                                     else DropdownMenuItem({ Text("기기에 보관") }, { active.keepOffline(selection); selectionMenu = false }, enabled = selection.none { it.location.sourceId == OFFLINE_SOURCE }, modifier = Modifier.testTag("menu-keep-offline"))
                                                 }
+                                                // Phone files can be locked away; vault files can be taken out or deleted for good.
+                                                if (selection.isNotEmpty() && selection.all { !it.isDirectory && isLocalSource(it.location.sourceId) })
+                                                    DropdownMenuItem({ Text("잠금 보관함으로 이동") }, { command = "잠금 보관함으로 이동"; selectionMenu = false }, enabled = canModify, modifier = Modifier.testTag("menu-move-to-vault"))
+                                                if (selection.isNotEmpty() && selection.all { it.location.sourceId == VAULT_SOURCE }) {
+                                                    DropdownMenuItem({ Text("보관함에서 꺼내기") }, { active.takeOutOfVault(selection); selectionMenu = false }, modifier = Modifier.testTag("menu-take-out-vault"))
+                                                    DropdownMenuItem({ Text("영구 삭제") }, { command = "보관함에서 영구 삭제"; selectionMenu = false }, modifier = Modifier.testTag("menu-delete-vault"))
+                                                }
                                                 // One-tap transfer to each plugged-in drive's root; the destination sheet still confirms.
                                                 volumes.filter { !it.readOnly && selection.none { item -> item.location.sourceId == it.sourceId } }.forEach { volume ->
                                                     DropdownMenuItem({ Text("‘${volume.name}’으로 복사") }, { controller.prepare(PendingTransfer(workspace.active, selection.map { it.location }, false, StorageLocation(volume.sourceId))); selectionMenu = false })

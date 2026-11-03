@@ -308,6 +308,9 @@ private fun ChecksumSection(entry: FileEntry, model: ExplorerViewModel) {
     }
 }
 
+/** File actions that only ask for confirmation, with no name to type. */
+private val CONFIRM_ONLY = setOf("휴지통으로 이동", "파일 정보", "잠금 보관함으로 이동", "보관함에서 영구 삭제")
+
 /** The part of a suggested name worth retyping: the name without its extension, or all of it for folders and dotfiles. */
 internal fun nameSelection(name: String, folder: Boolean): TextRange {
     val dot = name.lastIndexOf('.')
@@ -328,7 +331,7 @@ internal fun FileActions(state: ExplorerState, model: ExplorerViewModel, command
     val selection = model.selection()
     if (action == "일괄 이름 변경") { BatchRenameDialog(model) { action = null }; return }
     action?.let { title ->
-        val naming = title != "휴지통으로 이동" && title != "파일 정보"
+        val naming = title !in CONFIRM_ONLY
         val renaming = selection.singleOrNull()?.takeIf { title == "이름 변경" }
         val finalName = if (title == "ZIP 만들기" && !name.text.endsWith(".zip", true)) "${name.text}.zip" else name.text
         val taken = remember(state.entries) { state.entries.map { it.name } }
@@ -340,6 +343,8 @@ internal fun FileActions(state: ExplorerState, model: ExplorerViewModel, command
             if (!ready) { touched = true; return }
             when (title) {
                 "휴지통으로 이동" -> model.enqueue("TRASH")
+                "잠금 보관함으로 이동" -> model.moveToVault(selection)
+                "보관함에서 영구 삭제" -> model.deleteFromVault(selection)
                 "새 파일" -> model.newFile(finalName)
                 "새 폴더" -> model.enqueue("MKDIR", emptyList(), state.location!!.child(finalName))
                 "이름 변경" -> model.enqueue("RENAME", extra = JSONObject().put("name", finalName))
@@ -353,6 +358,8 @@ internal fun FileActions(state: ExplorerState, model: ExplorerViewModel, command
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 when (title) {
                     "휴지통으로 이동" -> Text("${selection.size}개 항목을 휴지통에 보관합니다. 복원할 수 있으며, 보관할 수 없으면 삭제하지 않습니다.")
+                    "잠금 보관함으로 이동" -> Text("${selection.size}개 파일을 암호화해 잠금 보관함에 넣고 원본은 지웁니다. 지문이나 화면 잠금으로만 열 수 있습니다. 휴대폰 화면 잠금을 없애거나 앱을 삭제하면 보관함 파일은 되살릴 수 없습니다.")
+                    "보관함에서 영구 삭제" -> Text("${selection.size}개 파일을 보관함에서 영구 삭제합니다. 휴지통을 거치지 않으며 되돌릴 수 없습니다.")
                     "파일 정보" -> selection.singleOrNull()?.let { FileInfo(it, model) }
                     else -> {
                         val shown = problem?.takeIf { touched || name.text.isNotEmpty() }
@@ -364,7 +371,7 @@ internal fun FileActions(state: ExplorerState, model: ExplorerViewModel, command
                 }
             }
         }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = ::confirm, enabled = ready, modifier = Modifier.testTag("name-confirm")) {
-            Text(when (title) { "파일 정보" -> "닫기"; "휴지통으로 이동" -> "휴지통으로 이동"; "이름 변경" -> "바꾸기"; else -> "만들기" })
+            Text(when (title) { "파일 정보" -> "닫기"; "휴지통으로 이동" -> "휴지통으로 이동"; "잠금 보관함으로 이동" -> "옮기기"; "보관함에서 영구 삭제" -> "영구 삭제"; "이름 변경" -> "바꾸기"; else -> "만들기" })
         } }, dismissButton = { if (title != "파일 정보") TextButton(shape = MaterialTheme.shapes.small, onClick = { action = null }) { Text("취소") } })
     }
 }

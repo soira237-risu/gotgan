@@ -11,6 +11,7 @@ import com.quickfiles.app.data.decodeLocation
 import com.quickfiles.app.data.encode
 import com.quickfiles.app.storage.StorageLocation
 import com.quickfiles.app.storage.isDeviceSource
+import com.quickfiles.app.storage.isLocalSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,7 +29,7 @@ data class BackupRule(
     val enabled: Boolean = true, val lastRun: Long = 0, val lastTask: String? = null,
 ) {
     init {
-        require(isDeviceSource(source.sourceId) && source.path.isNotEmpty()) { "휴대폰이나 USB의 폴더만 자동 백업할 수 있습니다." }
+        require(isLocalSource(source.sourceId) && source.path.isNotEmpty()) { "휴대폰이나 USB의 폴더만 자동 백업할 수 있습니다." }
         require(!isDeviceSource(destination.sourceId)) { "백업 위치는 서버 폴더여야 합니다." }
     }
     fun encode(): String = JSONObject().put("id", id).put("source", source.encode()).put("destination", destination.encode())

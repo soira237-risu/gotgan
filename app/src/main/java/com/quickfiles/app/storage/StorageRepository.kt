@@ -10,11 +10,14 @@ class StorageRepository(context: Context, private val additionalProvider: (suspe
     val volumes = RemovableVolumes(context)
     val inbox = Inbox(java.io.File(context.applicationContext.filesDir, "inbox"))
     val offline = OfflineStore(java.io.File(context.applicationContext.filesDir, "offline"))
+    /** Decrypted copies go to `vault-open`, which the file provider may share while the vault is unlocked. */
+    val vault = Vault(java.io.File(context.applicationContext.filesDir, "vault"), java.io.File(context.applicationContext.filesDir, "vault-open"), KeystoreGuard())
     suspend fun provider(id: String): StorageProvider {
         additionalProvider?.invoke(id)?.let { return it }
         if (id == LOCAL_SOURCE) return local
         if (id == INBOX_SOURCE) return inbox.provider
         if (id == OFFLINE_SOURCE) return offline.provider
+        if (id == VAULT_SOURCE) return vault.provider
         if (isVolumeSource(id)) return volumes.provider(id)
             ?: throw StorageException(StorageError.NOT_FOUND, "이동식 저장소가 연결되어 있지 않습니다. USB를 다시 연결해 주세요.")
         val profile = connections.profiles.first().firstOrNull { it.id == id }

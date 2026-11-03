@@ -25,6 +25,8 @@ import kotlin.coroutines.coroutineContext
 class MediaThumbnails(private val root: File, private val maximum: Long = 64 * MIB) {
     suspend fun thumbnail(provider: StorageProvider, entry: FileEntry, size: Int = 320): File? = withContext(Dispatchers.IO) {
         if (!entry.isVideo && !entry.isAudio) return@withContext null
+        // Thumbnails outlive the session on disk; a locked file's frame must not.
+        if (entry.location.sourceId == VAULT_SOURCE) return@withContext null
         root.mkdirs()
         val key = hash("${entry.id}:${entry.size}:${entry.modified}:${entry.etag}:$size")
         val target = File(root, "$key.jpg"); val miss = File(root, "$key.none")
