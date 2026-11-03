@@ -513,6 +513,7 @@ private fun PlaceSymbol(place: PlaceItem) {
 @Composable
 private fun FolderStateView(state: ExplorerState, model: ExplorerViewModel, location: StorageLocation, onSettings: () -> Unit, onCommand: (String) -> Unit) {
     val settings by model.settings.collectAsStateWithLifecycle()
+    val kept by model.kept.collectAsStateWithLifecycle()
     val error = state.error
     val retry = StateAction("다시 시도", "state-retry") { model.navigate(location, refresh = true) }
     val home = StateAction("저장소 선택", "state-home") { model.home() }
@@ -524,7 +525,7 @@ private fun FolderStateView(state: ExplorerState, model: ExplorerViewModel, loca
             StateKind.CERTIFICATE -> StateMessage(kind, "$error 곳간은 인증서 예외를 허용하지 않습니다.",
                 profile?.let { StateAction("연결 정보 보기", "state-connection") { model.editConnection(it) } } ?: home, retry)
             // Without a connection, kept server files are still one tap away.
-            StateKind.NETWORK -> StateMessage(kind, error, retry, if (model.kept.value.isNotEmpty()) StateAction("기기에 보관한 파일", "state-offline") { model.navigate(StorageLocation(OFFLINE_SOURCE)) } else home)
+            StateKind.NETWORK -> StateMessage(kind, error, retry, if (kept.isNotEmpty()) StateAction("기기에 보관한 파일", "state-offline") { model.navigate(StorageLocation(OFFLINE_SOURCE)) } else home)
             else -> StateMessage(kind, error, retry, home)
         }
         state.query.isNotBlank() || state.kind != null || state.date != null || state.size != null -> StateMessage(StateKind.NO_MATCH, "다른 이름으로 다시 찾아보세요. 하위 폴더까지 찾으려면 ‘하위 폴더 포함 검색’을 누르세요.")
