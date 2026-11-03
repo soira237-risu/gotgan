@@ -211,6 +211,7 @@ internal fun ExplorerMenuItems(state: ExplorerState, model: ExplorerViewModel, o
         // Phone and USB folders can be mirrored to a server folder.
         if (isLocalSource(state.location.sourceId) && state.location.path.isNotEmpty())
             DropdownMenuItem({ Text("이 폴더 자동 백업") }, { close { onPanel("백업 위치") } }, modifier = Modifier.testTag("menu-auto-backup"), leadingIcon = { Icon(Symbols.Sync, null) })
+        DropdownMenuItem({ Text("홈 화면에 추가") }, { close { model.pinShortcut() } }, modifier = Modifier.testTag("menu-pin-shortcut"), leadingIcon = { Icon(Symbols.Home, null) })
         DropdownMenuItem({ Text("저장공간 분석") }, { close { model.analyze(); onPanel("저장공간 분석") } }, modifier = Modifier.testTag("analyze-storage"), leadingIcon = { Icon(Symbols.PieChart, null) })
         HorizontalDivider()
     }

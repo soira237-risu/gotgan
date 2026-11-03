@@ -103,6 +103,7 @@ class MainActivity : ComponentActivity() {
         intent ?: return
         val owner = activeIndex()
         val model = models[owner]
+        com.quickfiles.app.ui.FolderShortcuts.location(intent)?.let { model.openShortcut(it); return }
         when (intent.action) {
             Intent.ACTION_SEND, Intent.ACTION_SEND_MULTIPLE -> {
                 val streams = if (intent.action == Intent.ACTION_SEND) listOfNotNull(IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java))

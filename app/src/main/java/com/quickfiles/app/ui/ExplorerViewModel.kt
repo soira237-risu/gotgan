@@ -190,6 +190,19 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
 
     suspend fun provider(sourceId: String): StorageProvider = graph.repository.provider(sourceId)
 
+    /** A home-screen shortcut opened this folder; it wins over the folder this tab would otherwise restore. */
+    fun openShortcut(location: StorageLocation) {
+        restored = true
+        closePreview()
+        navigate(location)
+    }
+    /** Pins the current folder to the launcher. */
+    fun pinShortcut() {
+        val location = state.value.location ?: return
+        val label = location.path.substringAfterLast('/').ifEmpty { sourceName(location.sourceId) }
+        if (!FolderShortcuts.pin(getApplication(), location, label)) notice("이 홈 화면 앱은 바로가기 추가를 지원하지 않습니다.")
+    }
+
     fun sourceName(sourceId: String) = if (sourceId == LOCAL_SOURCE) "휴대폰 저장소"
         else if (sourceId == INBOX_SOURCE) "받은 파일"
         else if (sourceId == OFFLINE_SOURCE) "기기에 보관한 파일"
