@@ -1,6 +1,11 @@
 package com.quickfiles.app.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -72,7 +77,10 @@ private fun DockButton(icon: androidx.compose.ui.graphics.vector.ImageVector, la
 /** Current (●) and other (○) location names; the body opens the switcher, the ⇄ button swaps directly. */
 @Composable
 private fun LocationSwitch(dock: DockModel, actions: DockActions, compact: Boolean, modifier: Modifier) {
-    Row(modifier.height(if (compact) 46.dp else 52.dp).clip(CircleShape).background(LocalGlass.current.pill, CircleShape)
+    // The capsule and its swap button ease with the dock around them rather than stepping inside it.
+    val height by animateDpAsState(if (compact) 46.dp else 52.dp, MaterialMotion.spatial(), label = "dock-switch-height")
+    val swap by animateDpAsState(if (compact) 38.dp else 40.dp, MaterialMotion.spatial(), label = "dock-swap-size")
+    Row(modifier.height(height).clip(CircleShape).background(LocalGlass.current.pill, CircleShape)
         .clickable(role = Role.Button, onClickLabel = "폴더 전환 열기", onClick = actions.switchPanel).testTag("folder-switch")
         .padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
@@ -81,12 +89,14 @@ private fun LocationSwitch(dock: DockModel, actions: DockActions, compact: Boole
                 Text(dock.current, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             // At large font sizes the second name no longer fits the capsule, so only the current one stays.
-            if (!compact && LocalDensity.current.fontScale < 1.5f) Row(verticalAlignment = Alignment.CenterVertically) {
+            AnimatedVisibility(!compact && LocalDensity.current.fontScale < 1.5f,
+                enter = fadeIn(MaterialMotion.effects()) + expandVertically(MaterialMotion.spatial()),
+                exit = fadeOut(MaterialMotion.screenExit(100)) + shrinkVertically(MaterialMotion.spatial())) { Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(6.dp).background(MaterialTheme.colorScheme.outline, CircleShape).padding(1.dp).background(LocalGlass.current.pill, CircleShape)); Spacer(Modifier.width(5.dp))
                 Text(dock.other, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+            } }
         }
-        Box(Modifier.size(if (compact) 38.dp else 40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer, CircleShape)
+        Box(Modifier.size(swap).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer, CircleShape)
             .clickable(role = Role.Button, onClickLabel = "다른 위치로 전환", onClick = actions.swap)
             .semantics { contentDescription = "다른 위치로 전환: ${dock.other}" }, contentAlignment = Alignment.Center) {
             Icon(Symbols.SwapHoriz, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)

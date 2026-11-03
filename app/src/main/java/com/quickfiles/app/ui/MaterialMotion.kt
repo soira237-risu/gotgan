@@ -35,6 +35,16 @@ internal object MaterialMotion {
 
 internal enum class FolderMotion(val direction: Int) { NONE(0), FORWARD(1), BACKWARD(-1), REPLACE(0) }
 
+/**
+ * Horizontal position of the drawn folder in units of the shared-axis shift. The arriving part keeps the motion the folder
+ * came in with and the leaving part uses the newer change, so an interrupted entry never jumps to the other side.
+ * A replacement scales in place instead of travelling.
+ */
+internal fun folderOffset(enterMotion: FolderMotion, enter: Float, leaveMotion: FolderMotion, leave: Float): Float {
+    fun travel(motion: FolderMotion) = if (motion == FolderMotion.REPLACE) 0f else motion.direction.toFloat()
+    return travel(enterMotion) * (1f - enter) - travel(leaveMotion) * leave
+}
+
 /** Compare whole path segments: a sibling such as 'photos-old' is not a child of 'photos'. */
 internal fun folderMotion(from: StorageLocation?, to: StorageLocation?): FolderMotion = when {
     from == to -> FolderMotion.NONE
