@@ -372,6 +372,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         flushViewport()
         if (entry.accessError != null) { notice(entry.accessError); return }
         picker?.let { request -> if (!entry.isDirectory) { pick(listOf(entry), request); return } }
+        if (!entry.isDirectory) viewModelScope.launch { runCatching { com.quickfiles.app.data.RecentFiles.record(graph.dao, entry) } }
         if (entry.isDirectory) { navigate(entry.location); return }
         if (entry.isVideo || entry.isAudio) {
             viewModelScope.launch {
@@ -748,6 +749,27 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             try { open(provider(location.sourceId).stat(location)) }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { notice(readableError(e)) }
+        }
+    }
+
+    /** Recently opened files and files that recently appeared on the phone; null while loading. */
+    val recents = MutableStateFlow<Pair<List<FileEntry>, List<FileEntry>>?>(null)
+    fun loadRecents() {
+        viewModelScope.launch {
+            val opened = runCatching { com.quickfiles.app.data.RecentFiles.list(graph.dao) }.getOrDefault(emptyList())
+            val added = if (state.value.hasPermission) runCatching { MediaRecents.recentlyAdded(getApplication()) }.getOrDefault(emptyList()) else emptyList()
+            recents.value = opened to added
+        }
+    }
+    /** Opens a recent file, or explains and forgets it when it was moved or deleted since. */
+    fun openRecent(entry: FileEntry) {
+        viewModelScope.launch {
+            try { open(provider(entry.location.sourceId).stat(entry.location)) }
+            catch (e: CancellationException) { throw e }
+            catch (e: StorageException) {
+                if (e.kind == StorageError.NOT_FOUND) { com.quickfiles.app.data.RecentFiles.forget(graph.dao, entry); recents.update { it?.let { (o, a) -> o.filter { x -> x.id != entry.id } to a.filter { x -> x.id != entry.id } } } }
+                notice(readableError(e))
+            } catch (e: Exception) { notice(readableError(e)) }
         }
     }
 

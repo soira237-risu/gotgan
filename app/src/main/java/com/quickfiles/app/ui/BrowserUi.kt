@@ -201,6 +201,7 @@ internal fun ExplorerMenuItems(state: ExplorerState, model: ExplorerViewModel, o
         DropdownMenuItem({ Text("저장공간 분석") }, { close { model.analyze(); onPanel("저장공간 분석") } }, modifier = Modifier.testTag("analyze-storage"), leadingIcon = { Icon(Symbols.PieChart, null) })
         HorizontalDivider()
     }
+    DropdownMenuItem({ Text("최근 파일") }, { close { onPanel("최근 파일") } }, modifier = Modifier.testTag("recent-files"), leadingIcon = { Icon(Symbols.History, null) })
     DropdownMenuItem({ Text("휴지통") }, { close { onPanel("휴지통") } }, leadingIcon = { Icon(Symbols.Delete, null) })
     DropdownMenuItem({ Text("설정") }, { close { onPanel("설정") } }, leadingIcon = { Icon(Symbols.Settings, null) })
     if (player.visible) DropdownMenuItem({ Text("재생 중") }, { close { onPanel("재생 중") } }, leadingIcon = { Icon(Symbols.MusicNote, null) })
