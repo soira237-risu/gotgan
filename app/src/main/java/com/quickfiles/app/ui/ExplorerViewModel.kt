@@ -55,6 +55,10 @@ class PickRequest(val mimeTypes: List<String>, val multiple: Boolean, val delive
     }
 }
 
+/** A storage analysis of one folder tree; [report] is null while it runs. */
+data class AnalysisState(val root: StorageLocation, val running: Boolean = true, val progress: ScanProgress = ScanProgress(0, 0),
+    val report: StorageReport? = null, val error: String? = null)
+
 data class ConnectionEditor(
     val token: String = UUID.randomUUID().toString(), val existing: ConnectionProfile? = null,
     val name: String = "", val url: String = "", val username: String = "", val password: String = "",
@@ -734,6 +738,46 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { notice(readableError(e)) }
         }
+    }
+
+    val analysis = MutableStateFlow<AnalysisState?>(null)
+    private var analyzing: Job? = null
+
+    /** Measures [location]'s tree. Duplicates are hashed only on local sources, where reading costs no download. */
+    fun analyze(location: StorageLocation? = state.value.location) {
+        location ?: return
+        analyzing?.cancel()
+        analysis.value = AnalysisState(location)
+        analyzing = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val local = location.sourceId == LOCAL_SOURCE || location.sourceId == INBOX_SOURCE
+                val report = StorageAnalyzer(isManagedName = OperationEngine::isManagedName)
+                    .analyze(provider(location.sourceId), location, settings.value.showHidden, findDuplicates = local) { p ->
+                        analysis.update { if (it?.root == location) it.copy(progress = p) else it }
+                    }
+                analysis.update { if (it?.root == location) it.copy(running = false, report = report) else it }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { analysis.update { if (it?.root == location) it.copy(running = false, error = readableError(e)) else it } }
+        }
+    }
+    fun cancelAnalysis() { analyzing?.cancel(); analysis.update { it?.copy(running = false) } }
+    fun closeAnalysis() { analyzing?.cancel(); analysis.value = null }
+
+    /** Moves every copy but the first of each group to the trash, then drops them from the report. */
+    fun trashDuplicates(groups: List<DuplicateGroup>) {
+        val extra = groups.flatMap { it.files.drop(1) }
+        if (extra.isEmpty()) return
+        enqueue("TRASH", extra.map { it.location }, destination = null, preserveSelection = true, onQueued = {
+            val removed = extra.map { it.id }.toSet()
+            analysis.update { current -> current?.copy(report = current.report?.let { r -> r.copy(duplicates = r.duplicates.filter { g -> g.files.none { it.id in removed } },
+                largest = r.largest.filter { it.id !in removed }) }) }
+        })
+    }
+
+    /** Total size and file count beneath a folder, for the file information dialog. */
+    suspend fun folderSize(entry: FileEntry): Pair<Long, Int> = withContext(Dispatchers.IO) {
+        val report = StorageAnalyzer(largestCount = 0, isManagedName = OperationEngine::isManagedName).analyze(provider(entry.location.sourceId), entry.location, settings.value.showHidden, findDuplicates = false)
+        report.totalBytes to report.files
     }
 
     fun cancelOpenWith() { handoffGeneration++; handing?.cancel(); handing = null; mutableState.update { it.copy(handoff = null) } }

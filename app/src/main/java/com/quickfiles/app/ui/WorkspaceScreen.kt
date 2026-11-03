@@ -230,6 +230,18 @@ internal fun SettingsPanel(model: ExplorerViewModel) {
     }
 }
 
+/** Name, place, size and date; a folder's size is measured on open, since listings carry no folder sizes. */
+@Composable
+private fun FileInfo(entry: FileEntry, model: ExplorerViewModel) {
+    var size by remember(entry.id) { mutableStateOf(entry.size?.let(::formatBytes) ?: "크기 계산 중…") }
+    if (entry.isDirectory) LaunchedEffect(entry.id) {
+        size = try { model.folderSize(entry).let { (bytes, files) -> "${formatBytes(bytes)} · 파일 ${files}개" } }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { "크기를 계산하지 못했습니다. ${readableError(e)}" }
+    }
+    Text("${entry.name}\n${model.sourceName(entry.location.sourceId)} / ${entry.location.path}\n$size\n${entry.modified?.let { time -> DateFormat.getDateTimeInstance().format(Date(time)) }.orEmpty()}",
+        Modifier.testTag("file-info"))
+}
+
 @Composable
 internal fun FileActions(state: ExplorerState, model: ExplorerViewModel, command: String? = null, onConsumed: () -> Unit = {}) {
     var action by rememberSaveable { mutableStateOf<String?>(null) }
@@ -240,7 +252,7 @@ internal fun FileActions(state: ExplorerState, model: ExplorerViewModel, command
         Column(Modifier.verticalScroll(rememberScrollState())) {
             when (title) {
                 "휴지통으로 이동" -> Text("${selection.size}개 항목을 휴지통에 보관합니다. 복원할 수 있으며, 보관할 수 없으면 삭제하지 않습니다.")
-                "파일 정보" -> selection.singleOrNull()?.let { Text("${it.name}\n${model.sourceName(it.location.sourceId)} / ${it.location.path}\n${it.size?.let(::formatBytes) ?: "폴더"}\n${it.modified?.let { time -> DateFormat.getDateTimeInstance().format(Date(time)) }.orEmpty()}") }
+                "파일 정보" -> selection.singleOrNull()?.let { FileInfo(it, model) }
                 else -> OutlinedTextField(name, { name = it }, label = { Text("이름") }, singleLine = true)
             }
         }
