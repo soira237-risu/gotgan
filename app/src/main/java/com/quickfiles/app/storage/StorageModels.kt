@@ -35,7 +35,7 @@ data class FileEntry(
     val isText: Boolean get() = !isDirectory && FileFormats.isText(name)
     val isEditableText: Boolean get() = !isDirectory && FileFormats.isEditableText(name)
     val isPdf: Boolean get() = !isDirectory && extension == "pdf"
-    val isArchive: Boolean get() = !isDirectory && extension in listOf("zip", "cbz")
+    val isArchive: Boolean get() = !isDirectory && com.quickfiles.app.viewer.ArchiveFormat.detect(name) != null
     val isVideo: Boolean get() = !isDirectory && extension in FileFormats.videos
     val isAudio: Boolean get() = !isDirectory && extension in FileFormats.audio
     val revision: Revision get() = Revision(size, modified, etag)

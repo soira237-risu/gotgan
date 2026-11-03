@@ -65,6 +65,13 @@
                 <data android:mimeType="application/pdf" />
                 <data android:mimeType="application/zip" />
                 <data android:mimeType="application/vnd.comicbook+zip" />
+                <data android:mimeType="application/x-7z-compressed" />
+                <data android:mimeType="application/x-tar" />
+                <data android:mimeType="application/gzip" />
+                <data android:mimeType="application/x-gzip" />
+                <data android:mimeType="application/x-xz" />
+                <data android:mimeType="application/x-bzip2" />
+                <data android:mimeType="application/zstd" />
             </intent-filter>
             <!-- File picker for other apps' "attach a file" buttons. -->
             <intent-filter android:label="@string/pick_label">

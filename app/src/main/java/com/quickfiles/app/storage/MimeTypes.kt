@@ -20,7 +20,8 @@ object MimeTypes {
         "flv" to "video/x-flv", "webm" to "video/webm",
         "m4a" to "audio/mp4", "m4b" to "audio/mp4", "opus" to "audio/ogg", "oga" to "audio/ogg", "flac" to "audio/flac", "amr" to "audio/amr",
         "heic" to "image/heic", "heif" to "image/heif", "avif" to "image/avif", "webp" to "image/webp",
-        "7z" to "application/x-7z-compressed", "rar" to "application/vnd.rar",
+        "7z" to "application/x-7z-compressed", "rar" to "application/vnd.rar", "tar" to "application/x-tar", "tgz" to "application/gzip",
+        "gz" to "application/gzip", "xz" to "application/x-xz", "bz2" to "application/x-bzip2", "zst" to "application/zstd",
     )
 
     fun forName(name: String, platform: (String) -> String? = ::platformType): String {

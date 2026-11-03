@@ -415,7 +415,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                 val document = if (entry.isText) TextDocument.read(source, entry) else null
                 val text = document?.let { TextPreview(it.bytes, !it.complete) }
                 val pdf = if (entry.isPdf) PdfDocument.open(getApplication(), entry) else null
-                val archive = if (entry.isArchive) ArchiveDocument.open(graph.cache.channel(source, entry)) else null
+                val archive = if (entry.isArchive) ArchiveDocument.open(graph.cache.channel(source, entry), ArchiveFormat.detect(entry.name) ?: ArchiveFormat.Zip) else null
                 val decoded = withContext(Dispatchers.Default) { document?.decode().orEmpty() }
                 if (generation == viewGeneration) mutableState.update { it.copy(preview = it.preview?.copy(loading = false, asset = lease?.file, text = text, document = document, decodedText = decoded, pdf = pdf, archive = archive)) }
                 else { pdf?.close(); archive?.close() }
