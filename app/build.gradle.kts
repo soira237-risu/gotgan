@@ -68,6 +68,8 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)
     implementation(libs.media3.ui)
+    // Annotation-only; androidTest pins a newer error_prone_annotations and consistent resolution would conflict.
+    implementation(libs.nextlib.media3ext) { exclude(group = "com.google.errorprone", module = "error_prone_annotations") }
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)
     implementation(libs.work.runtime)

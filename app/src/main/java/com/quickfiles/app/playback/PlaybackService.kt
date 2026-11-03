@@ -50,14 +50,14 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         graph = AppGraph.get(this)
         timer = SleepTimerController(SystemClock::elapsedRealtime)
-        val sources = DefaultMediaSourceFactory { StorageDataSource(graph) }.setLoadErrorHandlingPolicy(object : DefaultLoadErrorHandlingPolicy(2) {
+        val sources = DefaultMediaSourceFactory { M2tsDataSource(StorageDataSource(graph)) }.setLoadErrorHandlingPolicy(object : DefaultLoadErrorHandlingPolicy(2) {
             override fun getRetryDelayMsFor(info: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
                 val causes = generateSequence(info.exception as Throwable) { it.cause }.take(12).toList()
                 if (causes.filterIsInstance<StorageException>().none { it.kind == StorageError.NETWORK } || info.errorCount > 2) return C.TIME_UNSET
                 return causes.filterIsInstance<MediaReadError>().firstOrNull()?.budget?.nextDelay() ?: C.TIME_UNSET
             }
         })
-        player = ExoPlayer.Builder(this)
+        player = ExoPlayer.Builder(this, GotganRenderersFactory(this))
             .setMediaSourceFactory(sources)
             .setSeekBackIncrementMs(SEEK_MS)
             .setSeekForwardIncrementMs(SEEK_MS)

@@ -6,8 +6,10 @@ import java.util.Locale
 object FileFormats {
     val images = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif", "avif")
     val texts = setOf("txt", "md", "markdown", "log", "json", "csv", "tsv", "xml", "yaml", "yml", "ini", "conf", "properties", "srt", "vtt")
-    val videos = setOf("mp4", "mkv", "webm", "mov", "m4v", "3gp", "ts", "3gpp", "mpg", "mpeg", "flv")
-    val audio = setOf("mp3", "m4a", "aac", "flac", "ogg", "opus", "wav", "m4b", "oga", "amr")
+    val videos = setOf("mp4", "mkv", "webm", "mov", "m4v", "3gp", "ts", "3gpp", "mpg", "mpeg", "flv",
+        "mts", "m2ts", "m2t", "avi", "divx", "vob", "mpe", "f4v")
+    val audio = setOf("mp3", "m4a", "aac", "flac", "ogg", "opus", "wav", "m4b", "oga", "amr",
+        "ac3", "ec3", "eac3", "mka", "weba", "mp2", "mpa", "awb")
     fun extension(name: String) = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
     fun isImage(name: String) = extension(name) in images
     fun isText(name: String) = extension(name) in texts

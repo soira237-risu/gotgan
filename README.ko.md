@@ -28,7 +28,7 @@
 - 검증하는 복사·이동, 작업 대기열
 - 복원되는 휴지통
 - 이미지·텍스트·PDF·ZIP/CBZ 뷰어
-- 백그라운드 재생과 PiP
+- 백그라운드 재생과 PiP, 캠코더 .mts/.m2ts와 FFmpeg 기반 AC-3·DTS 오디오
 - 색상 테마 6종, 어둡게·OLED
 
 ## 빌드
@@ -42,3 +42,5 @@ JDK 17과 Android SDK 36이 필요합니다.
 ## 라이선스
 
 [MIT](LICENSE)
+
+앱 소스는 MIT입니다. 빌드된 APK에는 GPL-3.0인 [NextLib](https://github.com/anilbeesetti/nextlib) FFmpeg 디코더가 포함되므로, 배포되는 APK 전체는 GPL-3.0을 따릅니다.
