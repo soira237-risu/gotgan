@@ -110,6 +110,7 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                 }
                 CompositionLocalProvider(LocalBackdrop provides backdrop) {
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    active.picker?.let { request -> if (workspace.panel == null) PickerBar(request, active, state) }
                     AnimatedVisibility(workspace.pending != null && workspace.panel == null, Modifier.align(Alignment.CenterHorizontally),
                         enter = fadeIn(MaterialMotion.effects()) + expandVertically(MaterialMotion.spatial(), expandFrom = Alignment.Bottom),
                         exit = fadeOut(MaterialMotion.screenExit(100)) + shrinkVertically(MaterialMotion.spatial(), shrinkTowards = Alignment.Bottom)) {
@@ -157,6 +158,9 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                                                 DropdownMenuItem({ Text("전체 선택") }, { active.selectAll(); selectionMenu = false })
                                                 DropdownMenuItem({ Text("선택 해제") }, { active.clearSelection(); selectionMenu = false })
                                                 DropdownMenuItem({ Text("이름 변경") }, { command = "이름 변경"; selectionMenu = false }, enabled = canModify && selection.size == 1)
+                                                DropdownMenuItem({ Text("일괄 이름 변경") }, { command = "일괄 이름 변경"; selectionMenu = false }, enabled = canModify && selection.size > 1, modifier = Modifier.testTag("menu-batch-rename"))
+                                                DropdownMenuItem({ Text("경로 복사") }, { active.copyPaths(selection); selectionMenu = false }, enabled = selection.isNotEmpty(), modifier = Modifier.testTag("menu-copy-path"))
+                                                DropdownMenuItem({ Text("다른 앱으로 열기") }, { selection.singleOrNull()?.let(active::openWith); selectionMenu = false }, enabled = selection.size == 1 && !selection.single().isDirectory)
                                                 DropdownMenuItem({ Text("공유") }, { active.shareSelected(); selectionMenu = false }, enabled = selection.none { it.isDirectory })
                                                 DropdownMenuItem({ Text("파일 정보") }, { command = "파일 정보"; selectionMenu = false }, enabled = selection.size == 1)
                                                 // One-tap transfer to each plugged-in drive's root; the destination sheet still confirms.
@@ -215,14 +219,30 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                 if (controller.state.value.pending?.submitting == false) {
                     controller.submitting(true)
                     if (pending.archiveEntries != null) models[pending.owner].enqueue("EXTRACT", pending.sources, pending.destination!!.child(pending.outputFolder), extra = org.json.JSONObject().put("entries", org.json.JSONArray(pending.archiveEntries)), onQueued = { controller.cancelPreparation() }, onFinished = { controller.submitting(false) })
-                    else models[pending.owner].enqueue(if (pending.move) "MOVE" else "COPY", pending.sources, pending.destination, policy, onQueued = { controller.cancelPreparation() }, onFinished = { controller.submitting(false) })
+                    else models[pending.owner].enqueue(if (pending.move) "MOVE" else "COPY", pending.sources, pending.destination, policy, onQueued = { controller.completePreparation() }, onFinished = { controller.submitting(false) })
                 }
             } }
             "목적지 선택" -> workspace.pending?.let { pending -> DestinationPicker(models[pending.owner], pending.destination, { controller.panel("목적지") }, controller::destination) }
             "작업 요약" -> WorkspaceSheet("작업", onDismissRequest = { controller.panel(null) }) { TaskSummary(active) { controller.panel("작업") } }
             "작업", "휴지통", "설정" -> FullPanel(workspace.panel!!, { controller.panel(null) }) { when (workspace.panel) { "작업" -> TasksPanel(active); "휴지통" -> TrashPanel(active); else -> SettingsPanel(active) } }
+            "최근 파일" -> FullPanel("최근 파일", { controller.panel(null) }) { RecentFilesPanel(active) { controller.panel(null) } }
+            "저장공간 분석" -> FullPanel("저장공간 분석", { active.closeAnalysis(); controller.panel(null) }) { StorageAnalysisPanel(active) { controller.panel(null) } }
         }
         }
+    }
+}
+
+/** Shown while another app waits for Gotgan to pick a file: what to do, a send button for multi-select, and cancel. */
+@Composable
+private fun PickerBar(request: PickRequest, model: ExplorerViewModel, state: ExplorerState) {
+    val chosen = model.selection().filter { !it.isDirectory }
+    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).glass(LocalGlass.current, behind = Modifier.backdropBlur()).padding(start = 18.dp, end = 6.dp).testTag("picker-bar"),
+        verticalAlignment = Alignment.CenterVertically) {
+        Text(if (request.multiple) "보낼 ${request.label}을 누르거나 길게 눌러 여러 개 선택하세요" else "보낼 ${request.label}을 눌러 주세요",
+            Modifier.weight(1f).padding(vertical = 8.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        if (request.multiple && state.selected.isNotEmpty()) TextButton(shape = MaterialTheme.shapes.small, onClick = { model.pick(chosen, request) }, enabled = chosen.isNotEmpty(),
+            modifier = Modifier.testTag("picker-send")) { Text("${chosen.size}개 보내기") }
+        TextButton(shape = MaterialTheme.shapes.small, onClick = request.cancel, modifier = Modifier.testTag("picker-cancel")) { Text("취소") }
     }
 }
 
@@ -304,7 +324,7 @@ private fun DestinationPanel(pending: PendingTransfer, model: ExplorerViewModel,
             }
             error?.let { ErrorPanel(it) }
             if (!writable && pending.destination != null) Text("이 위치에는 쓸 수 없습니다. 다른 목적지를 선택해 주세요.", style = MaterialTheme.typography.bodySmall)
-            Button(shape = MaterialTheme.shapes.small, onClick = { execute(policy) }, enabled = writable && !pending.submitting, modifier = Modifier.fillMaxWidth()) { Text(if (pending.submitting) "작업 기록 중…" else if (pending.archiveEntries != null) "여기에 압축 해제" else if (pending.move) "여기로 이동" else "여기에 복사") }
+            Button(shape = MaterialTheme.shapes.small, onClick = { execute(policy) }, enabled = writable && !pending.submitting, modifier = Modifier.fillMaxWidth()) { Text(if (pending.submitting) "작업 기록 중…" else if (pending.archiveEntries != null) "여기에 압축 해제" else if (pending.received) "여기에 저장" else if (pending.move) "여기로 이동" else "여기에 복사") }
             val dismissSheet = LocalSheetDismiss.current
             Row { TextButton(shape = MaterialTheme.shapes.small, onClick = { dismissSheet(collapse) }) { Text("접기") }; TextButton(shape = MaterialTheme.shapes.small, onClick = { dismissSheet(cancel) }, enabled = !pending.submitting) { Text("준비 취소") } }
         }
@@ -338,7 +358,7 @@ private fun DestinationPicker(model: ExplorerViewModel, initial: StorageLocation
             val columns = if (settings.grid) gridColumns(width, LocalDensity.current.fontScale, settings.density) else 1
             val volumes by model.volumes.collectAsStateWithLifecycle()
             val places = remember(location, entries, state.profiles, settings.showHidden, volumes) {
-                if (location == null) listOf(PlaceItem(LOCAL_SOURCE, "휴대폰 저장소", "", StorageLocation(LOCAL_SOURCE))) + volumes.map(::volumePlace) + state.profiles.map { PlaceItem(it.id, it.name, "WebDAV", StorageLocation(it.id)) }
+                if (location == null) listOf(PlaceItem(LOCAL_SOURCE, "휴대폰 저장소", "", StorageLocation(LOCAL_SOURCE))) + volumes.map(::volumePlace) + state.profiles.map { PlaceItem(it.id, it.name, it.protocol.label, StorageLocation(it.id)) }
                 else entries.filter { settings.showHidden || !it.name.startsWith('.') }.map { PlaceItem(it.id, it.name, "", it.location) }
             }
             Column {

@@ -111,7 +111,8 @@ class OperationEngine(
         val task = dao.task(id) ?: return false
         val data = payload(task)
         val sources = data.getJSONArray("sources")
-        if ((0 until sources.length()).any { !isLocalSource(decodeLocation(sources.getString(it)).sourceId) }) return true
+        // Received files sit in app storage like phone files, so they never need the network either.
+        if ((0 until sources.length()).any { decodeLocation(sources.getString(it)).sourceId.let { id -> !isLocalSource(id) && id != INBOX_SOURCE } }) return true
         if (data.optString("destination").takeIf { it.isNotEmpty() && it != "null" }?.let { !isLocalSource(decodeLocation(it).sourceId) } == true) return true
         val trashIds = data.optJSONArray("trashIds") ?: return false
         return (0 until trashIds.length()).any { dao.trash(trashIds.getString(it))?.source?.let(::isLocalSource) != true }
@@ -160,13 +161,19 @@ class OperationEngine(
                         }
                         "RENAME" -> {
                             val source = decodeLocation(target)
-                            requireFileName(data.getString("name"))
-                            transfer(task.id, source, source.parent()!!.child(data.getString("name")), ConflictPolicy.SKIP, true, onProgress)
+                            // A batch rename carries one new name per source; a single rename carries just "name".
+                            val name = data.optJSONObject("names")?.optString(target)?.takeIf { it.isNotEmpty() } ?: data.getString("name")
+                            requireFileName(name)
+                            transfer(task.id, source, source.parent()!!.child(name), ConflictPolicy.SKIP, true, onProgress)
                         }
                         "TRASH" -> { trash(decodeLocation(target), stableId(task.id, target)); true }
                         "RESTORE" -> { restore(target); true }
                         "PURGE" -> { purge(target); true }
                         "MKDIR" -> { createFolder(task.id, requireNotNull(destination)); true }
+                        "NEWFILE" -> {
+                            requireFileName(requireNotNull(destination).path.substringAfterLast('/'))
+                            generated(task.id, destination, 0, { ByteArrayInputStream(ByteArray(0)) }); true
+                        }
                         "SAVE" -> { saveText(task.id, data, requireNotNull(destination)); true }
                         "SAVE_AS" -> {
                             val bytes = textBytes(task.id, data)
@@ -614,7 +621,7 @@ class OperationEngine(
         if (snapshot != null && !decodeRevision(snapshot.revision).matches(entry.revision)) throw StorageException(StorageError.CONFLICT, "압축파일이 변경되었습니다. 기존 출력은 보존했습니다.")
         if (snapshot == null) dao.item(TaskItem(snapshotId, task, source.encode(), destination.encode(), "", entry.revision.encode()))
         val names = (0 until selected.length()).map { ArchiveSafety.path(selected.getString(it)) }.toSet()
-        ArchiveDocument.open(requireNotNull(openChannel).invoke(p, entry)).use { archive ->
+        ArchiveDocument.open(requireNotNull(openChannel).invoke(p, entry), com.quickfiles.app.viewer.ArchiveFormat.detect(entry.name) ?: com.quickfiles.app.viewer.ArchiveFormat.Zip).use { archive ->
             createFolder(task, destination)
             val folders = hashSetOf("")
             suspend fun parents(path: String) {

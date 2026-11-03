@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
@@ -23,10 +24,13 @@ import javax.crypto.spec.GCMParameterSpec
 
 private val Context.connectionData by preferencesDataStore("connections")
 
-data class ConnectionProfile(val id: String, val name: String, val url: String, val username: String, val encryptedPassword: String)
+data class ConnectionProfile(val id: String, val name: String, val url: String, val username: String, val encryptedPassword: String) {
+    val protocol: Protocol get() = Protocol.of(url)
+}
 
-class ConnectionStore(private val context: Context) {
+class ConnectionStore(private val context: Context) : HostKeys {
     private val key = stringPreferencesKey("profiles_v1")
+    private val hostKeysKey = stringPreferencesKey("host_keys_v1")
     val profiles: Flow<List<ConnectionProfile>> = context.connectionData.data.map { decode(it[key] ?: "[]") }.flowOn(Dispatchers.IO)
 
     suspend fun save(id: String?, name: String, url: String, username: String, password: String): ConnectionProfile = withContext(Dispatchers.IO) {
@@ -34,7 +38,7 @@ class ConnectionStore(private val context: Context) {
         require(username.isNotBlank() && ':' !in username && '\n' !in username && '\r' !in username) { "올바른 사용자 이름을 입력해 주세요."
         }
         val profile = ConnectionProfile(id ?: UUID.randomUUID().toString(), name.trim(),
-            WebDavProvider.validatedUrl(url).toString(), username, encrypt(password))
+            validatedAddress(url), username, encrypt(password))
         context.connectionData.edit { preferences ->
             val existing = decode(preferences[key] ?: "[]").filterNot { it.id == profile.id }
             preferences[key] = encode(existing + profile)
@@ -44,9 +48,27 @@ class ConnectionStore(private val context: Context) {
 
     suspend fun remove(id: String) = withContext(Dispatchers.IO) {
         context.connectionData.edit { preferences ->
-            preferences[key] = encode(decode(preferences[key] ?: "[]").filterNot { it.id == id })
+            val profiles = decode(preferences[key] ?: "[]")
+            val removed = profiles.firstOrNull { it.id == id }
+            val remaining = profiles.filterNot { it.id == id }
+            preferences[key] = encode(remaining)
+            // Forget a server's key with its last connection, so re-adding it trusts the key it has now.
+            val host = removed?.takeIf { it.protocol == Protocol.SFTP }?.let { runCatching { RemoteAddress.parse(it.url).hostKey }.getOrNull() }
+            if (host != null && remaining.none { it.protocol == Protocol.SFTP && runCatching { RemoteAddress.parse(it.url).hostKey }.getOrNull() == host }) {
+                preferences[hostKeysKey] = JSONObject(preferences[hostKeysKey] ?: "{}").apply { remove(host) }.toString()
+            }
         }
     }
+
+    override suspend fun known(host: String): String? = withContext(Dispatchers.IO) {
+        JSONObject(context.connectionData.data.first()[hostKeysKey] ?: "{}").optString(host).ifEmpty { null }
+    }
+    override suspend fun trust(host: String, key: String) { withContext(Dispatchers.IO) {
+        context.connectionData.edit { preferences ->
+            val keys = JSONObject(preferences[hostKeysKey] ?: "{}")
+            if (!keys.has(host)) preferences[hostKeysKey] = keys.put(host, key).toString()
+        }
+    } }
 
     suspend fun password(profile: ConnectionProfile): String = withContext(Dispatchers.IO) {
         try {

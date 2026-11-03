@@ -38,7 +38,7 @@ import org.json.JSONObject
 import java.text.DateFormat
 import java.util.Date
 
-internal fun taskKindLabel(kind: String) = when (kind) { "COPY" -> "복사"; "MOVE" -> "이동"; "RENAME" -> "이름 변경"; "TRASH" -> "휴지통 이동"; "RESTORE" -> "복원"; "PURGE" -> "영구 삭제"; "MKDIR" -> "폴더 생성"; "SAVE", "SAVE_AS" -> "텍스트 저장"; "ZIP" -> "ZIP 만들기"; "EXTRACT" -> "압축 해제"; else -> kind }
+internal fun taskKindLabel(kind: String) = when (kind) { "COPY" -> "복사"; "MOVE" -> "이동"; "RENAME" -> "이름 변경"; "TRASH" -> "휴지통 이동"; "RESTORE" -> "복원"; "PURGE" -> "영구 삭제"; "MKDIR" -> "폴더 생성"; "NEWFILE" -> "파일 생성"; "SAVE", "SAVE_AS" -> "텍스트 저장"; "ZIP" -> "ZIP 만들기"; "EXTRACT" -> "압축 해제"; else -> kind }
 
 internal fun taskStateLabel(state: String) = when (state) { "QUEUED" -> "대기"; "RUNNING" -> "진행 중"; "PAUSING" -> "일시정지 중"; "CANCELLING" -> "취소 중"; "PAUSED" -> "일시정지"; "COMPLETE" -> "완료"; "PARTIAL" -> "부분 완료"; "FAILED" -> "실패"; "CANCELLED" -> "취소"; "PREPARING" -> "준비 중"; else -> state }
 
@@ -230,23 +230,86 @@ internal fun SettingsPanel(model: ExplorerViewModel) {
     }
 }
 
+/** Name, place, size and date; a folder's size is measured on open, since listings carry no folder sizes. */
+@Composable
+private fun FileInfo(entry: FileEntry, model: ExplorerViewModel) {
+    var size by remember(entry.id) { mutableStateOf(entry.size?.let(::formatBytes) ?: "크기 계산 중…") }
+    if (entry.isDirectory) LaunchedEffect(entry.id) {
+        size = try { model.folderSize(entry).let { (bytes, files) -> "${formatBytes(bytes)} · 파일 ${files}개" } }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { "크기를 계산하지 못했습니다. ${readableError(e)}" }
+    }
+    Text("${entry.name}\n${model.sourceName(entry.location.sourceId)} / ${entry.location.path}\n$size\n${entry.modified?.let { time -> DateFormat.getDateTimeInstance().format(Date(time)) }.orEmpty()}",
+        Modifier.testTag("file-info"))
+    if (!entry.isDirectory) ChecksumSection(entry, model)
+}
+
+/** MD5, SHA-1 and SHA-256 on request (a remote file is read in full), with a field to check a published value. */
+@Composable
+private fun ChecksumSection(entry: FileEntry, model: ExplorerViewModel) {
+    var running by remember(entry.id) { mutableStateOf(false) }
+    var read by remember(entry.id) { mutableStateOf(0L) }
+    var results by remember(entry.id) { mutableStateOf<Map<ChecksumKind, String>?>(null) }
+    var error by remember(entry.id) { mutableStateOf<String?>(null) }
+    var expected by rememberSaveable(entry.id) { mutableStateOf("") }
+    if (running) LaunchedEffect(entry.id) {
+        try { results = model.checksums(entry) { read = it }; error = null }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { error = readableError(e) }
+        finally { running = false }
+    }
+    Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        val done = results
+        when {
+            running -> {
+                val total = entry.size
+                if (total != null && total > 0) LinearProgressIndicator({ read.toFloat() / total }, Modifier.fillMaxWidth()) else LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text("체크섬 계산 중 · ${formatBytes(read)}${total?.let { " / ${formatBytes(it)}" }.orEmpty()}", style = MaterialTheme.typography.bodySmall)
+                TextButton(shape = MaterialTheme.shapes.small, onClick = { running = false }) { Text("중지") }
+            }
+            done == null -> OutlinedButton(shape = MaterialTheme.shapes.small, onClick = { read = 0; running = true }, modifier = Modifier.testTag("compute-checksums")) {
+                Text(if (isLocalSource(entry.location.sourceId) || entry.location.sourceId == INBOX_SOURCE) "체크섬 계산" else "체크섬 계산 (파일 전체를 내려받습니다)")
+            }
+            else -> {
+                ChecksumKind.entries.forEach { kind ->
+                    val value = done.getValue(kind)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(kind.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(value, style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace), modifier = Modifier.testTag("checksum-${kind.name}"))
+                        }
+                        IconButton({ model.copyText(kind.label, value); model.notice("${kind.label} 값을 복사했어요.") }) { Icon(Symbols.ContentCopy, "${kind.label} 복사") }
+                    }
+                }
+                OutlinedTextField(expected, { expected = it }, Modifier.fillMaxWidth().testTag("checksum-compare"), label = { Text("비교할 값 붙여넣기") }, singleLine = true)
+                if (expected.isNotBlank()) {
+                    val match = Checksums.match(done, expected)
+                    Text(match?.let { "${it.label} 값과 일치합니다." } ?: "어떤 값과도 일치하지 않습니다.", modifier = Modifier.testTag("checksum-result"),
+                        color = if (match != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+        error?.let { Text("체크섬을 계산하지 못했습니다. $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+    }
+}
+
 @Composable
 internal fun FileActions(state: ExplorerState, model: ExplorerViewModel, command: String? = null, onConsumed: () -> Unit = {}) {
     var action by rememberSaveable { mutableStateOf<String?>(null) }
     var name by rememberSaveable { mutableStateOf("") }
-    LaunchedEffect(command) { if (command != null) { action = command; name = if (command == "이름 변경") model.selection().singleOrNull()?.name.orEmpty() else if (command == "ZIP 만들기") "Archive.zip" else ""; onConsumed() } }
+    LaunchedEffect(command) { if (command != null) { action = command; name = when (command) { "이름 변경" -> model.selection().singleOrNull()?.name.orEmpty(); "ZIP 만들기" -> "Archive.zip"; "새 파일" -> "새 텍스트.txt"; else -> "" }; onConsumed() } }
     val selection = model.selection()
+    if (action == "일괄 이름 변경") { BatchRenameDialog(model) { action = null }; return }
     action?.let { title -> AlertDialog(onDismissRequest = { action = null }, title = { Text(title) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState())) {
             when (title) {
                 "휴지통으로 이동" -> Text("${selection.size}개 항목을 휴지통에 보관합니다. 복원할 수 있으며, 보관할 수 없으면 삭제하지 않습니다.")
-                "파일 정보" -> selection.singleOrNull()?.let { Text("${it.name}\n${model.sourceName(it.location.sourceId)} / ${it.location.path}\n${it.size?.let(::formatBytes) ?: "폴더"}\n${it.modified?.let { time -> DateFormat.getDateTimeInstance().format(Date(time)) }.orEmpty()}") }
+                "파일 정보" -> selection.singleOrNull()?.let { FileInfo(it, model) }
                 else -> OutlinedTextField(name, { name = it }, label = { Text("이름") }, singleLine = true)
             }
         }
     }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = {
         when (title) {
             "휴지통으로 이동" -> model.enqueue("TRASH")
+            "새 파일" -> model.newFile(name)
             "새 폴더" -> runCatching { requireFileName(name); model.enqueue("MKDIR", emptyList(), state.location!!.child(name)) }.onFailure { model.notice(it.message) }
             "이름 변경" -> runCatching { requireFileName(name); model.enqueue("RENAME", extra = JSONObject().put("name", name)) }.onFailure { model.notice(it.message) }
             "ZIP 만들기" -> runCatching { requireFileName(name); model.enqueue("ZIP", destination = state.location!!.child(if (name.endsWith(".zip", true)) name else "$name.zip")) }.onFailure { model.notice(it.message) }

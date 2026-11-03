@@ -48,7 +48,6 @@ import com.quickfiles.app.storage.*
 import com.quickfiles.app.viewer.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.distinctUntilChanged
-import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.json.JSONArray
 import org.json.JSONObject
 import androidx.compose.foundation.clickable
@@ -245,7 +244,7 @@ internal fun ArchiveDocumentView(preview: PreviewState, model: ExplorerViewModel
     var error by remember(current) { mutableStateOf<String?>(null) }
     var cp949 by remember { mutableStateOf(false) }
     var extract by remember { mutableStateOf(false) }
-    var folder by remember { mutableStateOf(preview.entry.name.substringBeforeLast('.') + "_extracted") }
+    var folder by remember { mutableStateOf(archiveStem(preview.entry.name) + "_extracted") }
     val images = remember(archive) { archive.entries.filter { !it.isDirectory && FileFormats.isImage(it.name) } }
     BackHandler(current != null) { model.archivePage(null) }
     LaunchedEffect(current) {

@@ -36,10 +36,28 @@ data class PreviewState(
     val bitmap: Bitmap? = null, val text: TextPreview? = null, val error: String? = null,
     val cp949: Boolean = false, val decodedText: String = "", val previous: FileEntry? = null, val next: FileEntry? = null,
     val asset: File? = null, val document: TextDocument? = null, val pdf: PdfDocument? = null, val archive: ArchiveDocument? = null,
-    val draft: String? = null,
+    val draft: String? = null, val unsupported: Boolean = false,
     val archiveSelected: Set<String> = emptySet(), val archiveCurrent: String? = null,
     val token: String = UUID.randomUUID().toString(),
 )
+
+data class Handoff(val name: String, val read: Long = 0, val total: Long? = null, val title: String = "다른 앱으로 열기")
+
+/** An app asked Gotgan to pick files (ACTION_GET_CONTENT); tapping a matching file returns it instead of opening it. */
+class PickRequest(val mimeTypes: List<String>, val multiple: Boolean, val deliver: (List<android.net.Uri>) -> Unit, val cancel: () -> Unit) {
+    fun accepts(entry: FileEntry) = !entry.isDirectory && MimeTypes.accepts(mimeTypes, MimeTypes.forName(entry.name).let { if (it == MimeTypes.ANY) "application/octet-stream" else it })
+    val label: String get() = when {
+        mimeTypes.isEmpty() || mimeTypes.any { it == "*/*" } -> "파일"
+        mimeTypes.all { it.startsWith("image/") } -> "사진"
+        mimeTypes.all { it.startsWith("video/") } -> "영상"
+        mimeTypes.all { it.startsWith("audio/") } -> "음악"
+        else -> "파일"
+    }
+}
+
+/** A storage analysis of one folder tree; [report] is null while it runs. */
+data class AnalysisState(val root: StorageLocation, val running: Boolean = true, val progress: ScanProgress = ScanProgress(0, 0),
+    val report: StorageReport? = null, val error: String? = null)
 
 data class ConnectionEditor(
     val token: String = UUID.randomUUID().toString(), val existing: ConnectionProfile? = null,
@@ -60,8 +78,12 @@ data class ExplorerState(
     val searchResults: List<FileEntry>? = null, val writable: Boolean = false, val notice: String? = null,
     /** Search type filter; null shows every kind. */
     val kind: FileKind? = null,
+    /** Search date and size conditions. */
+    val date: DateFilter? = null, val size: SizeFilter? = null,
     /** This folder's remembered list/grid choice; null follows the global default. */
     val gridOverride: Boolean? = null,
+    /** A file being fetched so another app can open it; null when idle. */
+    val handoff: Handoff? = null,
 )
 
 private data class FolderSnapshot(val entries: List<FileEntry>, val sort: SortOrder, val index: Int, val offset: Int, val direction: SortDirection, val anchor: ViewportAnchor)
@@ -97,6 +119,9 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
     private var pendingViewport: ViewportAnchor? = null
     private var imageLease: ContentCache.Lease? = null
     private val sharing = mutableListOf<ContentCache.Lease>()
+    private val handoffs = mutableListOf<ContentCache.Lease>()
+    private var handing: Job? = null
+    private var handoffGeneration = 0
     private val textHistory = mutableListOf<Long>()
 
     init {
@@ -161,8 +186,9 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
     suspend fun provider(sourceId: String): StorageProvider = graph.repository.provider(sourceId)
 
     fun sourceName(sourceId: String) = if (sourceId == LOCAL_SOURCE) "휴대폰 저장소"
+        else if (sourceId == INBOX_SOURCE) "받은 파일"
         else if (isVolumeSource(sourceId)) graph.repository.volumes.volume(sourceId)?.name ?: "이동식 저장소 (분리됨)"
-        else state.value.profiles.firstOrNull { it.id == sourceId }?.name ?: "WebDAV"
+        else state.value.profiles.firstOrNull { it.id == sourceId }?.name ?: "서버"
 
     fun navigate(location: StorageLocation, refresh: Boolean = false, restoredSort: SortOrder? = null, restoredIndex: Int = 0, restoredOffset: Int = 0, restoredDirection: SortDirection? = null, restoredAnchor: ViewportAnchor? = null) {
         rememberFolder()
@@ -179,7 +205,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         val offset = old?.offset ?: restoredOffset
         val canUseCache = old != null && !refresh && (!isLocalSource(location.sourceId) || state.value.hasPermission)
         mutableState.update { it.copy(location = location, entries = if (canUseCache) old!!.entries else emptyList(), sort = order,
-            index = index, offset = offset, direction = direction, anchor = anchor, searchOpen = false, viewportEpoch = it.viewportEpoch + 1, loading = !canUseCache, error = null, selected = emptySet(), query = "", searchResults = null, searching = false, kind = null,
+            index = index, offset = offset, direction = direction, anchor = anchor, searchOpen = false, viewportEpoch = it.viewportEpoch + 1, loading = !canUseCache, error = null, selected = emptySet(), query = "", searchResults = null, searching = false, kind = null, date = null, size = null,
             gridOverride = if (it.location == location) it.gridOverride else null, writable = !isLocalSource(location.sourceId) || it.hasPermission) }
         savePosition()
         viewModelScope.launch { graph.dao.save(SavedValue("recent:${location.key}", location.encode())); refreshPlaces() }
@@ -207,7 +233,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         searching?.cancel(); searchGeneration++; persisting?.cancel(); searchReturn = null
         browsing?.cancel(); browseGeneration++
         closePreview()
-        mutableState.update { it.copy(location = null, entries = emptyList(), loading = false, error = null, selected = emptySet(), query = "", searchOpen = false, searchResults = null, kind = null, gridOverride = null) }
+        mutableState.update { it.copy(location = null, entries = emptyList(), loading = false, error = null, selected = emptySet(), query = "", searchOpen = false, searchResults = null, kind = null, date = null, size = null, gridOverride = null) }
         saved["source"] = null
         viewModelScope.launch { graph.dao.removeSaved("tab:$tabId") }
     }
@@ -281,17 +307,24 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
     }
 
     fun showSearch(open: Boolean) {
-        if (!open) { mutableState.update { it.copy(kind = null) }; query("") }
-        mutableState.update { it.copy(searchOpen = open, kind = if (open) it.kind else null) }
+        if (!open) { mutableState.update { it.copy(kind = null, date = null, size = null) }; query("") }
+        mutableState.update { if (open) it.copy(searchOpen = true) else it.copy(searchOpen = false, kind = null, date = null, size = null) }
     }
 
-    fun kind(value: FileKind?) {
+    fun kind(value: FileKind?) = filters(filters().copy(kind = value))
+    fun date(value: DateFilter?) = filters(filters().copy(date = value))
+    fun size(value: SizeFilter?) = filters(filters().copy(size = value))
+    fun filters() = state.value.let { SearchFilters(it.kind, it.date, it.size) }
+    private fun filters(value: SearchFilters) {
         flushViewport()
         val current = state.value
-        if (value == current.kind) return
-        val anchor = if (value == null && current.query.isEmpty()) searchReturn.also { searchReturn = null } ?: current.anchor
+        if (value == filters()) return
+        val anchor = if (!value.active && current.query.isEmpty()) searchReturn.also { searchReturn = null } ?: current.anchor
             else { if (searchReturn == null) searchReturn = current.anchor; ViewportAnchor(layout = current.anchor.layout) }
-        mutableState.update { it.copy(kind = value, selected = emptySet(), index = anchor.index, offset = anchor.offset, anchor = anchor) }
+        // Subfolder results found without a name were narrowed by the old conditions, so they no longer apply.
+        if (current.query.isBlank() && current.searchResults != null) { searching?.cancel(); searchGeneration++ }
+        mutableState.update { it.copy(kind = value.kind, date = value.date, size = value.size, selected = emptySet(), index = anchor.index, offset = anchor.offset, anchor = anchor,
+            searchResults = if (it.query.isBlank()) null else it.searchResults, searching = if (it.query.isBlank()) false else it.searching) }
     }
 
     /** Effective list/grid for the current location. */
@@ -348,14 +381,20 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         }
     }
 
+    /** Set by the Activity while another app is waiting for a picked file. */
+    var picker: PickRequest? by mutableStateOf(null)
+
     fun open(entry: FileEntry) {
         flushViewport()
         if (entry.accessError != null) { notice(entry.accessError); return }
+        picker?.let { request -> if (!entry.isDirectory) { pick(listOf(entry), request); return } }
+        if (!entry.isDirectory) viewModelScope.launch { runCatching { com.quickfiles.app.data.RecentFiles.record(graph.dao, entry) } }
         if (entry.isDirectory) { navigate(entry.location); return }
         if (entry.isVideo || entry.isAudio) {
             viewModelScope.launch {
                 try {
-                    graph.playback.play(entry, state.value.entries)
+                    // A file from elsewhere (e.g. another app) must not start this folder's playlist instead.
+                    graph.playback.play(entry, state.value.entries.takeIf { list -> list.any { it.id == entry.id } } ?: listOf(entry))
                     getApplication<Application>().startActivity(android.content.Intent(getApplication(), com.quickfiles.app.playback.PlayerActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
                 } catch (e: Exception) { if (e is CancellationException) throw e; notice(readableError(e)) }
             }
@@ -372,7 +411,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         val position = images.indexOfFirst { it.id == entry.id }
         mutableState.update { it.copy(preview = PreviewState(entry, previous = images.getOrNull(position - 1), next = if (position >= 0) images.getOrNull(position + 1) else null)) }
         if (!entry.isImage && !entry.isText && !entry.isPdf && !entry.isArchive) {
-            mutableState.update { it.copy(preview = it.preview?.copy(loading = false, error = "이 파일 형식은 내장 뷰어에서 지원하지 않습니다. 파일 메뉴에서 공유로 열어 주세요.")) }
+            mutableState.update { it.copy(preview = it.preview?.copy(loading = false, error = "이 파일 형식은 내장 뷰어에서 지원하지 않습니다. 다른 앱으로 열어 주세요.", unsupported = true)) }
             return
         }
         viewing = viewModelScope.launch {
@@ -392,7 +431,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                 val document = if (entry.isText) TextDocument.read(source, entry) else null
                 val text = document?.let { TextPreview(it.bytes, !it.complete) }
                 val pdf = if (entry.isPdf) PdfDocument.open(getApplication(), entry) else null
-                val archive = if (entry.isArchive) ArchiveDocument.open(graph.cache.channel(source, entry)) else null
+                val archive = if (entry.isArchive) ArchiveDocument.open(graph.cache.channel(source, entry), ArchiveFormat.detect(entry.name) ?: ArchiveFormat.Zip) else null
                 val decoded = withContext(Dispatchers.Default) { document?.decode().orEmpty() }
                 if (generation == viewGeneration) mutableState.update { it.copy(preview = it.preview?.copy(loading = false, asset = lease?.file, text = text, document = document, decodedText = decoded, pdf = pdf, archive = archive)) }
                 else { pdf?.close(); archive?.close() }
@@ -444,7 +483,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             try {
                 require(edit.name.isNotBlank()) { "연결 이름을 입력해 주세요." }
                 require(edit.username.isNotBlank() && ':' !in edit.username && '\r' !in edit.username && '\n' !in edit.username) { "올바른 사용자 이름을 입력해 주세요." }
-                WebDavProvider.validatedUrl(edit.url)
+                validatedAddress(edit.url)
                 val password = if (edit.existing != null && edit.password.isEmpty()) store.password(edit.existing) else edit.password
                 if (save) {
                     edit.existing?.let { previous ->
@@ -462,8 +501,10 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                     if (state.value.editor?.token == edit.token) closeEditor()
                 } else {
                     val sourceId = edit.existing?.id ?: "connection-test"
-                    val entries = WebDavProvider(sourceId, edit.url, edit.username, password).list(StorageLocation(sourceId))
-                    if (state.value.editor?.token == edit.token) mutableState.update { it.copy(editor = it.editor?.copy(busy = false, result = "연결 성공 · 항목 ${entries.size}개")) }
+                    val provider = graph.repository.connect(sourceId, validatedAddress(edit.url), edit.username, password)
+                    val entries = try { provider.list(StorageLocation(sourceId)) } finally { (provider as? java.io.Closeable)?.close() }
+                    val key = (provider as? SftpProvider)?.newlyTrustedKey?.let { "\n처음 본 서버 키를 신뢰했습니다: $it" }.orEmpty()
+                    if (state.value.editor?.token == edit.token) mutableState.update { it.copy(editor = it.editor?.copy(busy = false, result = "연결 성공 · 항목 ${entries.size}개$key")) }
                 }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
@@ -489,15 +530,16 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
     }
 
     fun notice(message: String?) { mutableState.update { it.copy(notice = message) } }
-    fun visibleEntries(): List<FileEntry> = state.value.kind.let { kind ->
-        (state.value.searchResults ?: state.value.entries).filter { (settings.value.showHidden || !it.name.startsWith('.')) && it.name.contains(state.value.query, ignoreCase = true) && (kind == null || kind.matches(it)) }
+    fun visibleEntries(): List<FileEntry> = filters().let { filters ->
+        val now = System.currentTimeMillis()
+        (state.value.searchResults ?: state.value.entries).filter { (settings.value.showHidden || !it.name.startsWith('.')) && it.name.contains(state.value.query, ignoreCase = true) && filters.matches(it, now) }
     }
     fun select(entry: FileEntry) { mutableState.update { it.copy(selected = if (entry.id in it.selected) it.selected - entry.id else it.selected + entry.id) } }
     internal fun paintSelection(ids: Set<String>, selecting: Boolean, origin: ExplorerState) {
         if (ids.isEmpty()) return
         mutableState.update { current ->
             if (current.location != origin.location || current.viewportEpoch != origin.viewportEpoch ||
-                current.query != origin.query || current.kind != origin.kind || current.preview != null) current
+                current.query != origin.query || current.kind != origin.kind || current.date != origin.date || current.size != origin.size || current.preview != null) current
             else current.copy(selected = if (selecting) current.selected + ids else current.selected - ids)
         }
     }
@@ -510,7 +552,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         flushViewport()
         searching?.cancel(); searchGeneration++
         val current = state.value
-        val anchor = if (value.isEmpty() && current.kind == null) searchReturn.also { searchReturn = null } ?: current.anchor
+        val anchor = if (value.isEmpty() && !filters().active) searchReturn.also { searchReturn = null } ?: current.anchor
             else { if (searchReturn == null) searchReturn = current.anchor; if (value == current.query) current.anchor else ViewportAnchor(layout = current.anchor.layout) }
         mutableState.update { it.copy(query = value, searchResults = null, searching = false, index = anchor.index, offset = anchor.offset, anchor = anchor) }
     }
@@ -521,7 +563,8 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         if (cancel) { mutableState.update { it.copy(searching = false) }; return }
         val root = state.value.location ?: return
         val term = state.value.query
-        if (term.isBlank()) { notice("검색할 이름을 먼저 입력해 주세요."); return }
+        val filters = filters()
+        if (term.isBlank() && !filters.active) { notice("검색할 이름을 입력하거나 종류·날짜·크기 조건을 골라 주세요."); return }
         mutableState.update { it.copy(searching = true, searchResults = emptyList()) }
         searching = viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -531,7 +574,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                     ensureActive()
                     val entries = source.list(queue.removeFirst()).filterNot { OperationEngine.isManagedName(it.name) }
                     for (entry in entries) {
-                        if (entry.name.contains(term, true)) found += entry
+                        if (entry.name.contains(term, true) && (term.isNotBlank() || filters.matches(entry))) found += entry
                         if (entry.isDirectory && (settings.value.showHidden || !entry.name.startsWith('.'))) queue.add(entry.location)
                     }
                     ensureActive()
@@ -561,6 +604,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             try {
                 graph.ready.await()
                 val taskId = graph.operations.enqueue(kind, sources, destination, policy, extra)
+                if (sources.any { it.sourceId == INBOX_SOURCE }) withContext(Dispatchers.IO) { graph.repository.inbox.attach(sources, taskId) }
                 onQueued()
                 if (!preserveSelection) clearSelection()
                 TransferScheduler.schedule(getApplication(), graph.operations.needsNetwork(taskId))
@@ -611,6 +655,38 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         val preview = state.value.preview ?: return false
         return preview.document?.revision?.matches(provider(preview.entry.location.sourceId).stat(preview.entry.location).revision) == true
     }
+    /** Where a file lives, as text another app or a person can use: a filesystem path on the phone, a URL on a server. */
+    fun pathText(entry: FileEntry): String = when (entry.location.sourceId) {
+        LOCAL_SOURCE -> File(Environment.getExternalStorageDirectory(), entry.location.path).path
+        INBOX_SOURCE -> "받은 파일/" + entry.location.path
+        else -> graph.repository.volumes.volume(entry.location.sourceId)?.let { File(it.directory, entry.location.path).path } ?: state.value.profiles.firstOrNull { it.id == entry.location.sourceId }?.url?.trimEnd('/')
+            ?.let { base -> if (entry.location.path.isEmpty()) base else base + "/" + entry.location.path.split('/').joinToString("/") { android.net.Uri.encode(it) } }
+            ?: (sourceName(entry.location.sourceId) + "/" + entry.location.path)
+    }
+    fun copyPaths(entries: List<FileEntry> = selection()) {
+        if (entries.isEmpty()) return
+        copyText("경로", entries.joinToString("\n", transform = ::pathText))
+        notice(if (entries.size == 1) "경로를 복사했어요." else "경로 ${entries.size}개를 복사했어요.")
+    }
+    fun copyText(label: String, text: String) {
+        getApplication<Application>().getSystemService(android.content.ClipboardManager::class.java)
+            ?.setPrimaryClip(android.content.ClipData.newPlainText(label, text))
+    }
+    suspend fun checksums(entry: FileEntry, progress: (Long) -> Unit): Map<ChecksumKind, String> =
+        Checksums.compute(provider(entry.location.sourceId), entry, progress)
+    fun newFile(name: String) {
+        val folder = state.value.location ?: return
+        runCatching { requireFileName(name) }.onFailure { notice(it.message); return }
+        if (state.value.entries.any { it.name.equals(name, ignoreCase = true) }) { notice("같은 이름의 항목이 있어요."); return }
+        enqueue("NEWFILE", emptyList(), folder.child(name))
+    }
+    fun renamePlan(template: String, find: String, replace: String, start: Int): RenamePlan =
+        BatchRename.plan(selection(), state.value.entries, template, find, replace, start)
+    fun batchRename(plan: RenamePlan) {
+        if (!plan.valid) return
+        val names = JSONObject().apply { plan.renames.forEach { put(it.entry.location.encode(), it.name) } }
+        enqueue("RENAME", plan.renames.map { it.entry.location }, extra = JSONObject().put("names", names))
+    }
     fun shareSelected() {
         val selected = selection().filterNot { it.isDirectory }
         viewModelScope.launch {
@@ -631,5 +707,162 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             catch (e: Exception) { notice(readableError(e)) }
         }
     }
-    override fun onCleared() { closePreview(); sharing.forEach { it.close() }; super.onCleared() }
+    /**
+     * Opens one file in another app through ACTION_VIEW. Remote files are fetched into the cache first;
+     * the lease stays pinned until the next hand-off so the receiving app can keep reading it.
+     */
+    fun openWith(entry: FileEntry) {
+        if (entry.isDirectory) return
+        if (entry.accessError != null) { notice(entry.accessError); return }
+        handing?.cancel()
+        val generation = ++handoffGeneration
+        mutableState.update { it.copy(handoff = Handoff(entry.name, total = entry.size)) }
+        handing = viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                var lastProgress = 0L
+                val lease = graph.cache.full(provider(entry.location.sourceId), entry) { bytes, total ->
+                    val now = System.nanoTime()
+                    if (now - lastProgress >= 100_000_000 || bytes == total) {
+                        lastProgress = now
+                        mutableState.update { if (generation == handoffGeneration) it.copy(handoff = it.handoff?.copy(read = bytes, total = total ?: it.handoff.total)) else it }
+                    }
+                }
+                if (generation != handoffGeneration) { lease.close(); return@launch }
+                handoffs.forEach { it.close() }; handoffs.clear(); handoffs += lease
+                val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", lease.file, entry.name)
+                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                    .setDataAndType(uri, MimeTypes.forName(entry.name))
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                intent.clipData = android.content.ClipData.newUri(context.contentResolver, entry.name, uri)
+                context.startActivity(intent)
+            } catch (e: CancellationException) { throw e }
+            catch (_: android.content.ActivityNotFoundException) { notice("이 파일을 열 수 있는 앱이 없습니다.") }
+            catch (e: Exception) { DiagnosticLog.record("HANDOFF", "open", e); notice(readableError(e)) }
+            finally { if (generation == handoffGeneration) mutableState.update { it.copy(handoff = null) } }
+        }
+    }
+    /** Hands [entries] to the app that asked for a file. Remote files are fetched first, under the same progress dialog. */
+    fun pick(entries: List<FileEntry>, requested: PickRequest? = null) {
+        val request = requested ?: picker ?: return
+        val files = entries.filter { !it.isDirectory }
+        if (files.isEmpty()) return
+        files.firstOrNull { !request.accepts(it) }?.let { notice("‘${it.name}’은 요청한 형식이 아닙니다. ${request.label}을 골라 주세요."); return }
+        files.firstOrNull { it.accessError != null }?.let { notice(it.accessError); return }
+        handing?.cancel()
+        val generation = ++handoffGeneration
+        mutableState.update { it.copy(handoff = Handoff(if (files.size == 1) files.single().name else "${files.size}개 파일", total = files.mapNotNull { f -> f.size }.takeIf { s -> s.size == files.size }?.sum(), title = "파일 보내기")) }
+        handing = viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                val uris = ArrayList<android.net.Uri>()
+                var done = 0L
+                for (entry in files) {
+                    val lease = graph.cache.full(provider(entry.location.sourceId), entry) { bytes, _ ->
+                        mutableState.update { if (generation == handoffGeneration) it.copy(handoff = it.handoff?.copy(read = done + bytes)) else it }
+                    }
+                    graph.keepPicked(lease)
+                    done += lease.file.length()
+                    uris += androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", lease.file, entry.name)
+                }
+                if (generation == handoffGeneration) request.deliver(uris)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { DiagnosticLog.record("HANDOFF", "pick", e); notice(readableError(e)) }
+            finally { if (generation == handoffGeneration) mutableState.update { it.copy(handoff = null) } }
+        }
+    }
+
+    /**
+     * Copies what another app sent into the inbox, then calls [ready] with the received locations.
+     * Used for "save to Gotgan" (share) and for opening another app's file in the built-in viewers.
+     */
+    fun receive(items: List<Incoming>, title: String, ready: (List<StorageLocation>) -> Unit) {
+        if (items.isEmpty()) return
+        handing?.cancel()
+        val generation = ++handoffGeneration
+        mutableState.update { it.copy(handoff = Handoff(if (items.size == 1) "받은 파일" else "받은 파일 ${items.size}개", title = title)) }
+        handing = viewModelScope.launch {
+            try {
+                val locations = graph.repository.inbox.receive(getApplication<Application>().contentResolver, items) { bytes, total ->
+                    mutableState.update { if (generation == handoffGeneration) it.copy(handoff = it.handoff?.copy(read = bytes, total = total)) else it }
+                }
+                if (generation == handoffGeneration) ready(locations) else graph.repository.inbox.discard(locations)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { DiagnosticLog.record("HANDOFF", "receive", e); notice(readableError(e)) }
+            finally { if (generation == handoffGeneration) mutableState.update { it.copy(handoff = null) } }
+        }
+    }
+
+    /** Opens a received file in the matching built-in viewer or the player. */
+    fun openReceived(location: StorageLocation) {
+        viewModelScope.launch {
+            try { open(provider(location.sourceId).stat(location)) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { notice(readableError(e)) }
+        }
+    }
+
+    /** Recently opened files and files that recently appeared on the phone; null while loading. */
+    val recents = MutableStateFlow<Pair<List<FileEntry>, List<FileEntry>>?>(null)
+    fun loadRecents() {
+        viewModelScope.launch {
+            val opened = runCatching { com.quickfiles.app.data.RecentFiles.list(graph.dao) }.getOrDefault(emptyList())
+            val added = if (state.value.hasPermission) runCatching { MediaRecents.recentlyAdded(getApplication()) }.getOrDefault(emptyList()) else emptyList()
+            recents.value = opened to added
+        }
+    }
+    /** Opens a recent file, or explains and forgets it when it was moved or deleted since. */
+    fun openRecent(entry: FileEntry) {
+        viewModelScope.launch {
+            try { open(provider(entry.location.sourceId).stat(entry.location)) }
+            catch (e: CancellationException) { throw e }
+            catch (e: StorageException) {
+                if (e.kind == StorageError.NOT_FOUND) { com.quickfiles.app.data.RecentFiles.forget(graph.dao, entry); recents.update { it?.let { (o, a) -> o.filter { x -> x.id != entry.id } to a.filter { x -> x.id != entry.id } } } }
+                notice(readableError(e))
+            } catch (e: Exception) { notice(readableError(e)) }
+        }
+    }
+
+    val analysis = MutableStateFlow<AnalysisState?>(null)
+    private var analyzing: Job? = null
+
+    /** Measures [location]'s tree. Duplicates are hashed only on local sources, where reading costs no download. */
+    fun analyze(location: StorageLocation? = state.value.location) {
+        location ?: return
+        analyzing?.cancel()
+        analysis.value = AnalysisState(location)
+        analyzing = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val local = isLocalSource(location.sourceId) || location.sourceId == INBOX_SOURCE
+                val report = StorageAnalyzer(isManagedName = OperationEngine::isManagedName)
+                    .analyze(provider(location.sourceId), location, settings.value.showHidden, findDuplicates = local) { p ->
+                        analysis.update { if (it?.root == location) it.copy(progress = p) else it }
+                    }
+                analysis.update { if (it?.root == location) it.copy(running = false, report = report) else it }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { analysis.update { if (it?.root == location) it.copy(running = false, error = readableError(e)) else it } }
+        }
+    }
+    fun cancelAnalysis() { analyzing?.cancel(); analysis.update { it?.copy(running = false) } }
+    fun closeAnalysis() { analyzing?.cancel(); analysis.value = null }
+
+    /** Moves every copy but the first of each group to the trash, then drops them from the report. */
+    fun trashDuplicates(groups: List<DuplicateGroup>) {
+        val extra = groups.flatMap { it.files.drop(1) }
+        if (extra.isEmpty()) return
+        enqueue("TRASH", extra.map { it.location }, destination = null, preserveSelection = true, onQueued = {
+            val removed = extra.map { it.id }.toSet()
+            analysis.update { current -> current?.copy(report = current.report?.let { r -> r.copy(duplicates = r.duplicates.filter { g -> g.files.none { it.id in removed } },
+                largest = r.largest.filter { it.id !in removed }) }) }
+        })
+    }
+
+    /** Total size and file count beneath a folder, for the file information dialog. */
+    suspend fun folderSize(entry: FileEntry): Pair<Long, Int> = withContext(Dispatchers.IO) {
+        val report = StorageAnalyzer(largestCount = 0, isManagedName = OperationEngine::isManagedName).analyze(provider(entry.location.sourceId), entry.location, settings.value.showHidden, findDuplicates = false)
+        report.totalBytes to report.files
+    }
+
+    fun cancelOpenWith() { handoffGeneration++; handing?.cancel(); handing = null; mutableState.update { it.copy(handoff = null) } }
+    override fun onCleared() { closePreview(); sharing.forEach { it.close() }; handoffs.forEach { it.close() }; super.onCleared() }
 }

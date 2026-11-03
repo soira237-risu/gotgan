@@ -3,4 +3,6 @@
     <cache-path name="shared-preview" path="content-v1/" />
     <!-- Only exact, explicitly selected files receive temporary URI grants. No prefix grants. -->
     <external-path name="phone" path="." />
+    <!-- Removable volumes (/storage/XXXX-XXXX) for USB and SD card files. -->
+    <root-path name="volumes" path="storage/" />
 </paths>
