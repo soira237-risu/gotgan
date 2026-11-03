@@ -1,5 +1,5 @@
-# Unit tests, lint and a debug APK on every push and pull request.
-# Device, NAS and release-signing checks stay local (AGENTS.md, docs/PUBLIC-RELEASE.md).
+# Unit tests, lint, a debug APK and an R8-minified release build on every push and pull request.
+# Device and NAS checks stay local; signed releases come from release.yml on vX.Y.Z tags.
 name: Android CI
 
 on:
@@ -36,6 +36,10 @@ jobs:
       # The project key is never committed, so CI signs with the runner's standard debug key and its APK cannot update an installed app.
       - name: Unit tests, lint, debug APK
         run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --stacktrace
+
+      # Catches missing R8 keep rules (missing classes, broken shrink) before a tag is pushed.
+      - name: Minified release build
+        run: ./gradlew :app:assembleRelease --stacktrace
 
       - name: Test and lint reports
         if: always()
