@@ -174,6 +174,15 @@ fun ExplorerScreen(model: ExplorerViewModel, hasPermission: Boolean, settingsUna
     }
     FileActions(state, model, command, { command = null })
     state.editor?.let { ConnectionDialog(it, model) }
+    state.handoff?.let { handoff -> AlertDialog(onDismissRequest = {}, title = { Text(handoff.title) }, text = {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("‘${handoff.name}’을 준비하고 있어요.")
+            val total = handoff.total
+            if (total != null && total > 0) LinearProgressIndicator({ (handoff.read.toFloat() / total).coerceIn(0f, 1f) }, Modifier.fillMaxWidth())
+            else LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (handoff.read > 0) Text("${formatBytes(handoff.read)}${total?.let { " / ${formatBytes(it)}" }.orEmpty()}", style = MaterialTheme.typography.bodySmall)
+        }
+    }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { model.cancelOpenWith() }, modifier = Modifier.testTag("cancel-open-with")) { Text("취소") } }, modifier = Modifier.testTag("open-with-progress")) }
     state.notice?.let { message -> AlertDialog(onDismissRequest = { model.notice(null) }, text = { Text(message) }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { model.notice(null) }) { Text("확인") } }) }
 }
 
@@ -184,13 +193,16 @@ internal fun ExplorerMenuItems(state: ExplorerState, model: ExplorerViewModel, o
     val player by model.graph.playback.state.collectAsStateWithLifecycle()
     if (state.location != null) {
         DropdownMenuItem({ Text("새 폴더") }, { close { onCommand("새 폴더") } }, enabled = state.writable, leadingIcon = { Icon(Symbols.CreateNewFolder, null) })
+        DropdownMenuItem({ Text("새 파일") }, { close { onCommand("새 파일") } }, enabled = state.writable, modifier = Modifier.testTag("menu-new-file"), leadingIcon = { Icon(Symbols.NoteAdd, null) })
         if (!state.writable) Text("이 위치는 변경할 수 없습니다", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
         DropdownMenuItem({ Text("즐겨찾기 추가/해제") }, { close { model.favorite() } }, leadingIcon = { Icon(Symbols.Star, null) })
         DropdownMenuItem({ Text(if (settings.showHidden) "숨김 파일 감추기" else "숨김 파일 표시") }, { close { model.updateSettings { it.copy(showHidden = !it.showHidden) } } }, leadingIcon = { Icon(Symbols.Visibility, null) })
         DropdownMenuItem({ Text("새로고침") }, { close { model.navigate(state.location, refresh = true) } }, modifier = Modifier.testTag("refresh-folder"), leadingIcon = { Icon(Symbols.Refresh, null) })
         DropdownMenuItem({ Text("전체 선택") }, { close { model.selectAll() } }, enabled = state.entries.isNotEmpty(), leadingIcon = { Icon(Symbols.CheckCircle, null) })
+        DropdownMenuItem({ Text("저장공간 분석") }, { close { model.analyze(); onPanel("저장공간 분석") } }, modifier = Modifier.testTag("analyze-storage"), leadingIcon = { Icon(Symbols.PieChart, null) })
         HorizontalDivider()
     }
+    DropdownMenuItem({ Text("최근 파일") }, { close { onPanel("최근 파일") } }, modifier = Modifier.testTag("recent-files"), leadingIcon = { Icon(Symbols.History, null) })
     DropdownMenuItem({ Text("휴지통") }, { close { onPanel("휴지통") } }, leadingIcon = { Icon(Symbols.Delete, null) })
     DropdownMenuItem({ Text("설정") }, { close { onPanel("설정") } }, leadingIcon = { Icon(Symbols.Settings, null) })
     if (player.visible) DropdownMenuItem({ Text("재생 중") }, { close { onPanel("재생 중") } }, leadingIcon = { Icon(Symbols.MusicNote, null) })
@@ -212,7 +224,7 @@ private fun ExplorerHeader(state: ExplorerState, model: ExplorerViewModel, heade
     LaunchedEffect(state.searchOpen) { if (state.searchOpen) { headerState.heightOffset = 0f; searchFocus.requestFocus(); keyboard?.show() } }
     val selecting = state.selected.isNotEmpty()
     val location = state.location
-    val count = remember(state.entries, state.query, state.searchResults, state.kind, settings.showHidden) { if (location == null) 0 else model.visibleEntries().size }
+    val count = remember(state.entries, state.query, state.searchResults, state.kind, state.date, state.size, settings.showHidden) { if (location == null) 0 else model.visibleEntries().size }
     val title = when { selecting -> "${state.selected.size}개 선택"; location == null -> "곳간"; else -> location.path.substringAfterLast('/').ifEmpty { model.sourceName(location.sourceId) } }
     val meta = when { location == null -> "내 파일을 차곡차곡"; selecting -> "${model.sourceName(location.sourceId)} · ${count}개 중"; location.path.isEmpty() -> "항목 ${count}개"; else -> "${model.sourceName(location.sourceId)} · 항목 ${count}개" }
     val collapsed = headerState.collapsedFraction
@@ -253,6 +265,20 @@ private fun ExplorerHeader(state: ExplorerState, model: ExplorerViewModel, heade
                         FilterChip(on, { model.kind(if (on) null else kind) }, label = { Text(kind.label) }, shape = CircleShape,
                             leadingIcon = if (on) ({ Icon(Symbols.Check, null, Modifier.size(18.dp)) }) else null,
                             modifier = Modifier.testTag("search-kind-${kind.name.lowercase()}"))
+                    }
+                }
+                if (state.searchOpen) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    DateFilter.entries.forEach { date ->
+                        val on = state.date == date
+                        FilterChip(on, { model.date(if (on) null else date) }, label = { Text(date.label) }, shape = CircleShape,
+                            leadingIcon = if (on) ({ Icon(Symbols.Check, null, Modifier.size(18.dp)) }) else null, modifier = Modifier.testTag("search-date-${date.name.lowercase()}"))
+                    }
+                    VerticalDivider(Modifier.height(24.dp))
+                    SizeFilter.entries.forEach { size ->
+                        val on = state.size == size
+                        FilterChip(on, { model.size(if (on) null else size) }, label = { Text(size.label) }, shape = CircleShape,
+                            leadingIcon = if (on) ({ Icon(Symbols.Check, null, Modifier.size(18.dp)) }) else null, modifier = Modifier.testTag("search-size-${size.name.lowercase()}"))
                     }
                 }
                 if (!state.searchOpen) Column(Modifier.padding(horizontal = 20.dp)) {
@@ -370,9 +396,9 @@ private fun StorageHome(state: ExplorerState, model: ExplorerViewModel, settings
         Column {
             LazyVerticalGrid(GridCells.Fixed(columns), Modifier.fillMaxSize().testTag("storage-home"), contentPadding = PaddingValues(start = edge, end = edge, top = 4.dp, bottom = bottomInset), horizontalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp), verticalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp)) {
                 item(span = { GridItemSpan(maxLineSpan) }) { sectionTitle("저장소") }
-                val sources = listOf(PlaceItem("phone", "휴대폰 저장소", "다운로드 · 사진 · 문서", StorageLocation(LOCAL_SOURCE))) + volumes.map(::volumePlace) + state.profiles.map { PlaceItem(it.id, it.name, "WebDAV", StorageLocation(it.id), it) }
+                val sources = listOf(PlaceItem("phone", "휴대폰 저장소", "다운로드 · 사진 · 문서", StorageLocation(LOCAL_SOURCE))) + volumes.map(::volumePlace) + state.profiles.map { PlaceItem(it.id, it.name, it.protocol.label, StorageLocation(it.id), it) }
                 items(sources, key = { it.id }) { place -> PlaceCell(place, settings.grid, { model.navigate(place.location!!) }, { place.profile?.let { details = it }; place.volume?.let { volumeDetails = it.sourceId } }, listDensity = settings.listDensity) }
-                item { PlaceCell(PlaceItem("add", "저장소 추가", "WebDAV 연결", null), settings.grid,
+                item { PlaceCell(PlaceItem("add", "저장소 추가", "WebDAV · SMB · SFTP", null), settings.grid,
                     { model.editConnection() }, {}, enabled = state.profilesReady, listDensity = settings.listDensity) }
                 if (!state.hasPermission || settingsUnavailable) item(span = { GridItemSpan(maxLineSpan) }) {
                     Column { Text("휴대폰 파일을 보려면 접근 권한을 허용해 주세요. NAS는 바로 사용할 수 있습니다.", style = MaterialTheme.typography.bodyMedium); TextButton(shape = MaterialTheme.shapes.small, onClick = onSettings, modifier = Modifier.testTag("storage-permission")) { Text("파일 접근 허용") } }
@@ -475,7 +501,7 @@ private fun FolderStateView(state: ExplorerState, model: ExplorerViewModel, loca
                 profile?.let { StateAction("연결 정보 보기", "state-connection") { model.editConnection(it) } } ?: home, retry)
             else -> StateMessage(kind, error, retry, home)
         }
-        state.query.isNotBlank() || state.kind != null -> StateMessage(StateKind.NO_MATCH, "다른 이름으로 다시 찾아보세요. 하위 폴더까지 찾으려면 ‘하위 폴더 포함 검색’을 누르세요.")
+        state.query.isNotBlank() || state.kind != null || state.date != null || state.size != null -> StateMessage(StateKind.NO_MATCH, "다른 이름으로 다시 찾아보세요. 하위 폴더까지 찾으려면 ‘하위 폴더 포함 검색’을 누르세요.")
         else -> StateMessage(StateKind.EMPTY, if (state.writable) "다른 위치에서 파일을 복사해 오거나 새 폴더를 만들 수 있어요." else "이 위치에 표시할 파일이 없어요.",
             if (state.writable) StateAction("새 폴더", "state-new-folder") { onCommand("새 폴더") } else null,
             if (!settings.showHidden) StateAction("숨긴 파일 보기") { model.updateSettings { it.copy(showHidden = true) } } else null)
@@ -486,7 +512,7 @@ private fun FolderStateView(state: ExplorerState, model: ExplorerViewModel, loca
 private fun FolderContent(state: ExplorerState, model: ExplorerViewModel, onSettings: () -> Unit, bottomInset: Dp, onCommand: (String) -> Unit) {
     val location = state.location ?: return
     val settings by model.settings.collectAsStateWithLifecycle()
-    val entries = remember(state.entries, state.query, state.searchResults, state.kind, settings.showHidden) { model.visibleEntries() }
+    val entries = remember(state.entries, state.query, state.searchResults, state.kind, state.date, state.size, settings.showHidden) { model.visibleEntries() }
     Column(Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.weight(1f)) {
             val contentWidth = maxWidth.value - if (state.gridOverride ?: settings.grid) 16 else 32
@@ -513,7 +539,7 @@ private fun EntryCollection(entries: List<FileEntry>, state: ExplorerState, mode
     val grid = state.gridOverride ?: settings.grid
     val layout = if (grid) "grid:$columns:${settings.density}" else "list:${settings.listDensity}"
     // Recreate only the layout state, keeping the provider's entry list and selection untouched.
-    key(state.location?.key, state.viewportEpoch, layout, state.query, state.kind, state.searchResults != null) {
+    key(state.location?.key, state.viewportEpoch, layout, state.query, state.kind, state.date, state.size, state.searchResults != null) {
         val anchor = remember { model.currentViewportAnchor() }
         val position = remember { anchor.resolve(entries) }
         val currentEntries by rememberUpdatedState(entries)
@@ -627,6 +653,7 @@ private fun FileCell(entry: FileEntry, selected: Boolean, model: ExplorerViewMod
             Icon(icon, null, Modifier.size(if (grid) 44.dp else 28.dp),
                 tint = if (entry.isDirectory) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
             if (entry.isImage) Thumbnail(entry, model, Modifier.fillMaxSize()) { tile.image = it }
+            else if (entry.isVideo || entry.isAudio) MediaThumbnail(entry, model, Modifier.fillMaxSize())
             // Grid tiles mark selection on the thumbnail; list rows use the trailing check instead.
             AnimatedVisibility(selected && grid, modifier = Modifier.align(Alignment.TopEnd),
                 enter = fadeIn(MaterialMotion.settle()) + scaleIn(MaterialMotion.settle(), initialScale = .8f), exit = ExitTransition.None) {
@@ -657,6 +684,20 @@ private fun FileCell(entry: FileEntry, selected: Boolean, model: ExplorerViewMod
             selecting -> Box(Modifier.size(26.dp).border(1.8.dp, MaterialTheme.colorScheme.outline, CircleShape))
             entry.isDirectory -> Icon(Symbols.ChevronRight, null, Modifier.size(20.dp))
         } }
+}
+
+/** A video frame or embedded album art over the type icon; nothing is drawn when the file has neither. */
+@Composable
+private fun MediaThumbnail(entry: FileEntry, model: ExplorerViewModel, modifier: Modifier) {
+    var asset by remember(entry.id, entry.etag, entry.modified) { mutableStateOf<java.io.File?>(null) }
+    LaunchedEffect(entry.id, entry.etag, entry.modified) {
+        val provider = runCatching { model.provider(entry.location.sourceId) }.getOrNull() ?: return@LaunchedEffect
+        val local = provider is com.quickfiles.app.storage.LocalStorageProvider
+        if (!local && !model.graph.unmetered()) return@LaunchedEffect
+        asset = try { model.graph.thumbnailRequests.withPermit { model.graph.mediaThumbnails.thumbnail(provider, entry) } }
+            catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+    }
+    asset?.let { AsyncImage(it, null, imageLoader = model.graph.thumbnailLoader, modifier = modifier, contentScale = ContentScale.Crop) }
 }
 
 @Composable

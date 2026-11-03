@@ -11,8 +11,10 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 data class PendingTransfer(val owner: Int, val sources: List<StorageLocation>, val move: Boolean, val destination: StorageLocation? = null,
-    val archiveEntries: List<String>? = null, val outputFolder: String = "", val policy: ConflictPolicy = ConflictPolicy.SKIP, val submitting: Boolean = false) {
-    val label get() = if (archiveEntries != null) "압축 해제" else if (move) "이동" else "복사"
+    val archiveEntries: List<String>? = null, val outputFolder: String = "", val policy: ConflictPolicy = ConflictPolicy.SKIP, val submitting: Boolean = false,
+    /** Files another app shared; they are copied out of the inbox and the inbox copy is dropped if the user cancels. */
+    val received: Boolean = false) {
+    val label get() = if (archiveEntries != null) "압축 해제" else if (received) "저장" else if (move) "이동" else "복사"
     val count get() = archiveEntries?.size ?: sources.size
 }
 data class WorkspaceUiState(val active: Int = 0, val split: Boolean = false, val panel: String? = null, val viewerOwner: Int? = null, val pending: PendingTransfer? = null, val ready: Boolean = false)
@@ -33,7 +35,13 @@ class WorkspaceController(private val graph: AppGraph) {
     fun destination(value: StorageLocation) { mutable.update { it.copy(pending = it.pending?.copy(destination = value), panel = "목적지") } }
     fun policy(value: ConflictPolicy) { mutable.update { it.copy(pending = it.pending?.copy(policy = value)) } }
     fun submitting(value: Boolean) { mutable.update { it.copy(pending = it.pending?.copy(submitting = value)) } }
-    fun cancelPreparation() { mutable.update { it.copy(pending = null, panel = null) } }
+    fun cancelPreparation() {
+        val dropped = state.value.pending?.takeIf { it.received }
+        mutable.update { it.copy(pending = null, panel = null) }
+        if (dropped != null) graph.scope.launch { graph.repository.inbox.discard(dropped.sources) }
+    }
+    /** After the save task is recorded: clear the preparation without discarding the files it still has to copy. */
+    fun completePreparation() { mutable.update { it.copy(pending = null, panel = null) } }
     private fun persist() {
         val current = state.value
         if (current.ready) graph.scope.launch { graph.dao.save(SavedValue("workspace:ui", JSONObject().put("active", current.active).put("split", current.split).toString())) }
