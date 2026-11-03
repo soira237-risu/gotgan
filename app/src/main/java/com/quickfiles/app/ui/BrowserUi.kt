@@ -119,7 +119,7 @@ fun ExplorerScreen(model: ExplorerViewModel, hasPermission: Boolean, settingsUna
             // Back to this folder before it had finished leaving (or even arriving): it returns to place.
             if (leave > 0f || dim < 1f || enter < 1f) {
                 launch { animate(dim, 1f, animationSpec = MaterialMotion.state()) { value, _ -> dim = value } }
-                launch { animate(enter, 1f, animationSpec = MaterialMotion.screenEnter(350)) { value, _ -> enter = value } }
+                launch { animate(enter, 1f, animationSpec = MaterialMotion.folderEnter()) { value, _ -> enter = value } }
                 animate(leave, 0f, animationSpec = MaterialMotion.spatial()) { value, _ -> leave = value }
             }
             return@LaunchedEffect
@@ -132,13 +132,13 @@ fun ExplorerScreen(model: ExplorerViewModel, hasPermission: Boolean, settingsUna
                 animate(dim, .55f, animationSpec = MaterialMotion.state()) { value, _ -> dim = value }
                 withTimeoutOrNull(250) { snapshotFlow { model.state.value.loading }.first { !it } }
             }
-            animate(leave, 1f, animationSpec = MaterialMotion.screenExit(100)) { value, _ -> leave = value }
+            animate(leave, 1f, animationSpec = MaterialMotion.folderExit()) { value, _ -> leave = value }
         }
         enter = 0f; leave = 0f; dim = 1f
         backProgress.snapTo(0f)
         enterMotion = motion
         shownLocation = live.location
-        animate(0f, 1f, animationSpec = MaterialMotion.screenEnter(350)) { value, _ -> enter = value }
+        animate(0f, 1f, animationSpec = MaterialMotion.folderEnter()) { value, _ -> enter = value }
     }
     LaunchedEffect(hasPermission) { model.permissionChanged(hasPermission) }
     PredictiveBackHandler(active && (predictiveBack || state.location != null || state.preview != null || state.editor != null || state.searchOpen)) { events ->

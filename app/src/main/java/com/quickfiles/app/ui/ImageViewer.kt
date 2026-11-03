@@ -127,14 +127,14 @@ internal fun AnimatedAssetImage(asset: Any, model: ExplorerViewModel, modifier: 
         turning = true
         val start = swipe
         animation = scope.launch {
-            animate(start, -direction * width, animationSpec = MaterialMotion.exit()) { value, _ -> swipe = value }
+            animate(start, -direction * width, animationSpec = MaterialMotion.pageTurn()) { value, _ -> swipe = value }
             page()
             // Normally the next image replaces this one now; if it could not open, this one comes back.
             turning = false
             transition(1f, Offset.Zero)
         }
     }
-    LaunchedEffect(dimensions) { if (dimensions != Size.Zero && entrance.value < 1f) entrance.animateTo(1f, MaterialMotion.screenEnter(300)) }
+    LaunchedEffect(dimensions) { if (dimensions != Size.Zero && entrance.value < 1f) entrance.animateTo(1f, MaterialMotion.viewerEnter()) }
     DisposableEffect(asset) { onDispose { animation?.cancel() } }
     Box(modifier.clipToBounds().testTag("image-gesture-surface")
         .semantics {

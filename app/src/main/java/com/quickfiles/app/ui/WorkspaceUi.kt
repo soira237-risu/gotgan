@@ -240,9 +240,9 @@ internal fun FullPanel(title: String, close: () -> Unit, content: @Composable Co
     fun dismiss() {
         if (closing) return
         closing = true
-        scope.launch { enter.animateTo(0f, MaterialMotion.screenExit(250)); closeRequest() }
+        scope.launch { enter.animateTo(0f, MaterialMotion.viewerExit()); closeRequest() }
     }
-    LaunchedEffect(Unit) { enter.animateTo(1f, MaterialMotion.screenEnter()) }
+    LaunchedEffect(Unit) { enter.animateTo(1f, MaterialMotion.viewerEnter()) }
     LaunchedEffect(depth) { snapshotFlow { enter.value * (1f - .3f * back) }.collect { depth?.floatValue = it } }
     DisposableEffect(depth) { onDispose { depth?.floatValue = 0f } }
     Dialog(onDismissRequest = ::dismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
