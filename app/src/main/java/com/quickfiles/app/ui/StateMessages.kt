@@ -64,17 +64,28 @@ internal fun StateMessage(kind: StateKind, body: String, primary: StateAction? =
 
 /** Reading a folder: progress, what is happening, and cancel. */
 @Composable
-internal fun LoadingState(onCancel: () -> Unit, modifier: Modifier = Modifier) {
+internal fun LoadingState(onCancel: () -> Unit, modifier: Modifier = Modifier, grid: Boolean = true) {
     Column(modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         LinearProgressIndicator(Modifier.fillMaxWidth(), strokeCap = androidx.compose.ui.graphics.StrokeCap.Round)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("폴더를 읽고 있습니다…", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onCancel, shape = CircleShape) { Text("취소") }
         }
-        // Placeholder tiles keep the layout from jumping when the first items arrive.
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Placeholders in the shape of the coming view keep the layout from jumping when the first items arrive.
+        val tone = MaterialTheme.colorScheme.surfaceContainerHigh
+        if (grid) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(1f, .7f, .45f).forEach { alpha ->
-                Box(Modifier.weight(1f).aspectRatio(1f).background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = alpha), MaterialTheme.shapes.medium))
+                Box(Modifier.weight(1f).aspectRatio(1f).background(tone.copy(alpha = alpha), MaterialTheme.shapes.medium))
+            }
+        } else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            listOf(1f, .7f, .45f).forEach { alpha ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.size(40.dp).background(tone.copy(alpha = alpha), MaterialTheme.shapes.small))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(Modifier.fillMaxWidth(.6f).height(14.dp).background(tone.copy(alpha = alpha), CircleShape))
+                        Box(Modifier.fillMaxWidth(.35f).height(10.dp).background(tone.copy(alpha = alpha * .7f), CircleShape))
+                    }
+                }
             }
         }
     }
