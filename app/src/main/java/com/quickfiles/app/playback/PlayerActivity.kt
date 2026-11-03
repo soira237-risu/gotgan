@@ -25,8 +25,23 @@ import com.quickfiles.app.RecentsCoordinator
 import com.quickfiles.app.ui.theme.GotganTheme
 import kotlinx.coroutines.launch
 
+/** Asks the player to slide up over the browser instead of using the system's task animation. */
+internal const val EXTRA_SLIDE_UP = "com.quickfiles.app.player.SLIDE_UP"
+
+/**
+ * Opens the player. Music slides up over the browser it can be pulled back down to, so the system's
+ * cross-task animation is turned off for it; video keeps the system animation of its opaque window.
+ */
+internal fun openPlayer(context: android.content.Context, music: Boolean) {
+    val intent = Intent(context, PlayerActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra(EXTRA_SLIDE_UP, music)
+    val options = if (music) android.app.ActivityOptions.makeCustomAnimation(context, 0, 0).toBundle() else null
+    context.startActivity(intent, options)
+}
+
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class PlayerActivity : ComponentActivity() {
+    /** Bumped each time the player is opened for music, to replay the slide-up. */
+    private var entrance by mutableIntStateOf(0)
     private companion object { var outputOwner: java.lang.ref.WeakReference<PlayerActivity>? = null }
     private var pip by mutableStateOf(false)
     private var multiWindow by mutableStateOf(false)
@@ -165,6 +180,7 @@ class PlayerActivity : ComponentActivity() {
     private fun enterPip() { if (graph.playback.state.value.video && !graph.playback.sessionState.value.audioOnly) enterPictureInPictureMode(buildPipParams()) }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null && intent.getBooleanExtra(EXTRA_SLIDE_UP, false)) entrance++
         onBackPressedDispatcher.addCallback(this) { returnToBrowser() }
         pipActionId = PlaybackPipActionRuntime.activate()
         enableEdgeToEdge()
@@ -205,7 +221,7 @@ class PlayerActivity : ComponentActivity() {
                 setPictureInPictureParams(buildPipParams())
             }
             GotganTheme(darkOverride = true, manageSystemBars = false) {
-                PlayerScreen(graph.playback, pip, this, outputVisible, revealable, onBack = ::returnToBrowser,
+                PlayerScreen(graph.playback, pip, this, outputVisible, revealable, entrance, onBack = ::returnToBrowser,
                     onDismiss = { returnToBrowser(animated = false) }, onPip = ::enterPip,
                     onRotate = { manualPortrait = resources.configuration.orientation != Configuration.ORIENTATION_PORTRAIT },
                     onStop = { lifecycleScope.launch { graph.playback.stop(); returnToBrowser() } },
@@ -217,7 +233,10 @@ class PlayerActivity : ComponentActivity() {
             }
         }
     }
-    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); pip = isInPictureInPictureMode }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent); setIntent(intent); pip = isInPictureInPictureMode
+        if (intent.getBooleanExtra(EXTRA_SLIDE_UP, false) && !pip) entrance++
+    }
     override fun onResume() { super.onResume(); pip = isInPictureInPictureMode; multiWindow = isInMultiWindowMode; videoOutput(true) }
     override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {
         super.onTopResumedActivityChanged(isTopResumedActivity); topResumed = isTopResumedActivity

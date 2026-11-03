@@ -11,6 +11,13 @@ class MimeTypesTest {
     private val platform = mapOf("pdf" to "application/pdf", "jpg" to "image/jpeg", "mp4" to "video/mp4", "docx" to "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     private fun type(name: String) = MimeTypes.forName(name) { platform[it] }
 
+    @Test fun sharedFilesGetTheNarrowestCommonType() {
+        assertEquals("image/jpeg", MimeTypes.common(listOf("image/jpeg", "IMAGE/JPEG")))
+        assertEquals("image/*", MimeTypes.common(listOf("image/jpeg", "image/png")))
+        assertEquals("*/*", MimeTypes.common(listOf("image/jpeg", "video/mp4")))
+        assertEquals("*/*", MimeTypes.common(emptyList()))
+        assertEquals("*/*", MimeTypes.common(listOf("*/*", "image/png")))
+    }
     @Test fun platformTypesWinAndExtensionsIgnoreCase() {
         assertEquals("application/pdf", type("견적서.PDF"))
         assertEquals("image/jpeg", type("IMG_0001.Jpg"))

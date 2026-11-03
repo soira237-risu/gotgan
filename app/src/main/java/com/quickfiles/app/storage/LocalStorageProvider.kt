@@ -16,7 +16,7 @@ import kotlin.coroutines.coroutineContext
 class LocalStorageProvider(
     root: File, private val sourceId: String = LOCAL_SOURCE, private val rootName: String = "휴대폰 저장소",
     private val writable: Boolean = true, private val canRead: () -> Boolean,
-) : WritableStorageProvider {
+) : WritableStorageProvider, FileBackedProvider {
     constructor(root: File, canRead: () -> Boolean) : this(root, LOCAL_SOURCE, canRead = canRead)
     private val root = root.canonicalFile
     override val capabilities = StorageCapabilities(writable = writable, rangedRead = true)
@@ -128,7 +128,7 @@ class LocalStorageProvider(
         Files.delete(mutableFile(location).toPath())
     }
     override suspend fun availableBytes(location: StorageLocation): Long = withContext(Dispatchers.IO) { resolve(location).let { if (it.isDirectory) it else it.parentFile!! }.usableSpace }
-    suspend fun fileForRead(location: StorageLocation): File = withContext(Dispatchers.IO) {
+    override suspend fun fileForRead(location: StorageLocation): File = withContext(Dispatchers.IO) {
         val file = resolve(location)
         if (!file.isFile) throw StorageException(StorageError.READ, "파일을 읽을 수 없습니다.")
         file

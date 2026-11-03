@@ -6,6 +6,11 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import java.nio.ByteBuffer
+
+/** Largest page bitmap the service draws; the app refuses anything outside these bounds. */
+internal const val PDF_MAX_WIDTH = 2048
+internal const val PDF_MAX_HEIGHT = 4096
 
 /** Untrusted PDF parsing has neither filesystem permissions nor network access. */
 class PdfService : Service() {
@@ -17,11 +22,17 @@ class PdfService : Service() {
         @Synchronized override fun render(page: Int, width: Int, output: ParcelFileDescriptor) {
             ParcelFileDescriptor.AutoCloseOutputStream(output).use { stream ->
                 renderer!!.openPage(page).use { pdf ->
-                    val w = width.coerceIn(256, 2048)
-                    val h = (w.toDouble() * pdf.height / pdf.width).toInt().coerceIn(1, 4096)
+                    val w = width.coerceIn(256, PDF_MAX_WIDTH)
+                    val h = (w.toDouble() * pdf.height / pdf.width).toInt().coerceIn(1, PDF_MAX_HEIGHT)
                     val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                    try { bitmap.eraseColor(Color.WHITE); pdf.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY); bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream) }
-                    finally { bitmap.recycle() }
+                    try {
+                        bitmap.eraseColor(Color.WHITE); pdf.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        // Raw pixels behind a width/height header: encoding a PNG took longer than drawing the page.
+                        val pixels = ByteBuffer.allocate(8 + w * h * 4).putInt(w).putInt(h)
+                        bitmap.copyPixelsToBuffer(pixels)
+                        pixels.flip()
+                        while (pixels.hasRemaining()) stream.channel.write(pixels)
+                    } finally { bitmap.recycle() }
                 }
             }
         }

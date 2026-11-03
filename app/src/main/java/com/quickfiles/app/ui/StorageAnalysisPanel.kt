@@ -51,8 +51,8 @@ internal fun ColumnScope.StorageAnalysisPanel(model: ExplorerViewModel, close: (
                 Text("파일 ${report.files}개 · 폴더 ${report.folders}개" + if (report.unreadableFolders > 0) " · 읽지 못한 폴더 ${report.unreadableFolders}개" else "",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 report.kinds.filterValues { it > 0 }.forEach { (kind, bytes) -> UsageBar(kind.label, bytes, report.totalBytes) }
-                if (report.duplicates.isNotEmpty()) Text("중복 파일을 정리하면 ${formatBytes(report.reclaimable)}를 확보할 수 있어요.", color = MaterialTheme.colorScheme.primary)
-                else if (report.duplicatesSkipped) Text("원격 저장소는 모든 파일을 내려받아야 해서 중복 확인을 하지 않았어요.", style = MaterialTheme.typography.bodySmall)
+                if (report.duplicates.isNotEmpty()) Text("중복 파일을 정리하면 ${formatBytes(report.reclaimable)}를 확보할 수 있습니다.", color = MaterialTheme.colorScheme.primary)
+                else if (report.duplicatesSkipped) Text("원격 저장소는 모든 파일을 내려받아야 해서 중복 확인을 하지 않았습니다.", style = MaterialTheme.typography.bodySmall)
             }
         }
         section("폴더별 용량", report.children.isEmpty()) {
@@ -86,7 +86,7 @@ internal fun ColumnScope.StorageAnalysisPanel(model: ExplorerViewModel, close: (
     confirm?.let { groups ->
         val count = groups.sumOf { it.files.size - 1 }
         AlertDialog(onDismissRequest = { confirm = null }, title = { Text("중복 ${count}개 정리") },
-            text = { Text("각 묶음에서 경로 순으로 첫 파일만 남기고 나머지 ${count}개(${formatBytes(groups.sumOf { it.reclaimable })})를 휴지통으로 옮깁니다. 휴지통에서 복원할 수 있어요.") },
+            text = { Text("각 묶음에서 경로 순으로 첫 파일만 남기고 나머지 ${count}개(${formatBytes(groups.sumOf { it.reclaimable })})를 휴지통으로 옮깁니다. 휴지통에서 복원할 수 있습니다.") },
             confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { model.trashDuplicates(groups); confirm = null }, modifier = Modifier.testTag("confirm-clean-duplicates")) { Text("휴지통으로 이동") } },
             dismissButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { confirm = null }) { Text("취소") } })
     }

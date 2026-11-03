@@ -22,6 +22,13 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -38,7 +45,7 @@ import org.json.JSONObject
 import java.text.DateFormat
 import java.util.Date
 
-internal fun taskKindLabel(kind: String) = when (kind) { "COPY" -> "복사"; "MOVE" -> "이동"; "RENAME" -> "이름 변경"; "TRASH" -> "휴지통 이동"; "RESTORE" -> "복원"; "PURGE" -> "영구 삭제"; "MKDIR" -> "폴더 생성"; "NEWFILE" -> "파일 생성"; "SAVE", "SAVE_AS" -> "텍스트 저장"; "ZIP" -> "ZIP 만들기"; "EXTRACT" -> "압축 해제"; else -> kind }
+internal fun taskKindLabel(kind: String) = when (kind) { "COPY" -> "복사"; "BACKUP" -> "자동 백업"; "MOVE" -> "이동"; "RENAME" -> "이름 변경"; "TRASH" -> "휴지통 이동"; "RESTORE" -> "복원"; "PURGE" -> "영구 삭제"; "MKDIR" -> "폴더 생성"; "NEWFILE" -> "파일 생성"; "SAVE", "SAVE_AS" -> "텍스트 저장"; "ZIP" -> "ZIP 만들기"; "EXTRACT" -> "압축 해제"; else -> kind }
 
 internal fun taskStateLabel(state: String) = when (state) { "QUEUED" -> "대기"; "RUNNING" -> "진행 중"; "PAUSING" -> "일시정지 중"; "CANCELLING" -> "취소 중"; "PAUSED" -> "일시정지"; "COMPLETE" -> "완료"; "PARTIAL" -> "부분 완료"; "FAILED" -> "실패"; "CANCELLED" -> "취소"; "PREPARING" -> "준비 중"; else -> state }
 
@@ -50,7 +57,7 @@ internal fun taskTone(state: String) = when (state) {
 }
 
 internal fun taskKindIcon(kind: String) = when (kind) {
-    "COPY" -> Symbols.ContentCopy; "MOVE" -> Symbols.DriveFileMove; "RENAME", "SAVE", "SAVE_AS" -> Symbols.Edit
+    "COPY" -> Symbols.ContentCopy; "BACKUP" -> Symbols.Sync; "MOVE" -> Symbols.DriveFileMove; "RENAME", "SAVE", "SAVE_AS" -> Symbols.Edit
     "TRASH", "PURGE" -> Symbols.Delete; "RESTORE" -> Symbols.Refresh; "MKDIR" -> Symbols.CreateNewFolder
     "ZIP" -> Symbols.FolderZip; "EXTRACT" -> Symbols.Unarchive; else -> Symbols.SwapVert
 }
@@ -62,7 +69,7 @@ internal fun TaskSummary(model: ExplorerViewModel, openAll: () -> Unit) {
     val active = tasks.filter { taskTone(it.state) == StatusTone.ACTIVE }
     val recent = tasks.filter { taskTone(it.state) != StatusTone.ACTIVE }.take(3)
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (tasks.isEmpty()) Text("진행 중인 작업이 없어요.", Modifier.padding(4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (tasks.isEmpty()) Text("진행 중인 작업이 없습니다.", Modifier.padding(4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         (active + recent).take(5).forEach { task ->
             Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow, MaterialTheme.shapes.large).padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -94,7 +101,7 @@ internal fun TasksPanel(model: ExplorerViewModel) {
     var savingAs by remember { mutableStateOf<FileTask?>(null) }
     var saveName by remember { mutableStateOf("") }
     var saveError by remember { mutableStateOf<String?>(null) }
-    if (tasks.isEmpty()) Text("아직 작업이 없습니다. 복사·이동·휴지통 이동 같은 작업이 여기에 기록돼요.", Modifier.padding(start = 4.dp, top = 16.dp),
+    if (tasks.isEmpty()) Text("아직 작업이 없습니다. 복사·이동·휴지통 이동 같은 작업이 여기에 기록됩니다.", Modifier.padding(start = 4.dp, top = 16.dp),
         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)) {
         items(tasks, key = { it.id }) { task ->
@@ -163,7 +170,7 @@ internal fun TrashPanel(model: ExplorerViewModel) {
         PillButton("영구 삭제", { purge = selected.toList() }, enabled = selected.isNotEmpty())
         PillButton("비우기", { purge = items.map { it.id } }, enabled = items.isNotEmpty())
     }
-    if (items.isEmpty()) Text("휴지통이 비어 있습니다. 삭제한 파일은 여기에 보관되고 직접 비우기 전까지 남아 있어요.", Modifier.padding(start = 4.dp, top = 8.dp),
+    if (items.isEmpty()) Text("휴지통이 비어 있습니다. 삭제한 파일은 여기에 보관되고 직접 비우기 전까지 남아 있습니다.", Modifier.padding(start = 4.dp, top = 8.dp),
         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     else LazyColumn(Modifier.background(MaterialTheme.colorScheme.surfaceContainerLow, MaterialTheme.shapes.large), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) { items(items, key = { it.id }) { item ->
         val checked = item.id in selected
@@ -215,6 +222,8 @@ internal fun SettingsPanel(model: ExplorerViewModel) {
             Slider(settings.cacheMiB.toFloat(), { value -> model.updateSettings { it.copy(cacheMiB = (value / 256).toInt() * 256) } }, valueRange = 256f..4096f, steps = 14,
                 modifier = Modifier.semantics { contentDescription = "미리보기 캐시 한도"; stateDescription = "${settings.cacheMiB}MiB" })
         }
+        SectionLabel("자동 백업")
+        BackupSettings(model)
         SectionLabel("재생")
         GroupCard {
             ToggleRow("영상에서 홈으로 나갈 때 자동 PiP", settings.autoPip) { value -> model.updateSettings { it.copy(autoPip = value) } }
@@ -268,9 +277,12 @@ private fun ChecksumSection(entry: FileEntry, model: ExplorerViewModel) {
                 TextButton(shape = MaterialTheme.shapes.small, onClick = { running = false }) { Text("중지") }
             }
             done == null -> OutlinedButton(shape = MaterialTheme.shapes.small, onClick = { read = 0; running = true }, modifier = Modifier.testTag("compute-checksums")) {
-                Text(if (isLocalSource(entry.location.sourceId) || entry.location.sourceId == INBOX_SOURCE) "체크섬 계산" else "체크섬 계산 (파일 전체를 내려받습니다)")
+                Text(if (isDeviceSource(entry.location.sourceId)) "체크섬 계산" else "체크섬 계산 (파일 전체를 내려받습니다)")
             }
             else -> {
+                // The copy button turns into a check for a moment; a dialog on top of this one would be too much.
+                var copied by remember { mutableStateOf<ChecksumKind?>(null) }
+                LaunchedEffect(copied) { if (copied != null) { kotlinx.coroutines.delay(1500); copied = null } }
                 ChecksumKind.entries.forEach { kind ->
                     val value = done.getValue(kind)
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -278,7 +290,10 @@ private fun ChecksumSection(entry: FileEntry, model: ExplorerViewModel) {
                             Text(kind.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(value, style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace), modifier = Modifier.testTag("checksum-${kind.name}"))
                         }
-                        IconButton({ model.copyText(kind.label, value); model.notice("${kind.label} 값을 복사했어요.") }) { Icon(Symbols.ContentCopy, "${kind.label} 복사") }
+                        IconButton({ model.copyText(kind.label, value); copied = kind }) {
+                            Icon(if (copied == kind) Symbols.Check else Symbols.ContentCopy, if (copied == kind) "${kind.label} 복사됨" else "${kind.label} 복사",
+                                tint = if (copied == kind) MaterialTheme.colorScheme.primary else LocalContentColor.current)
+                        }
                     }
                 }
                 OutlinedTextField(expected, { expected = it }, Modifier.fillMaxWidth().testTag("checksum-compare"), label = { Text("비교할 값 붙여넣기") }, singleLine = true)
@@ -293,29 +308,104 @@ private fun ChecksumSection(entry: FileEntry, model: ExplorerViewModel) {
     }
 }
 
+/** File actions that only ask for confirmation, with no name to type. */
+private val CONFIRM_ONLY = setOf("휴지통으로 이동", "파일 정보", "잠금 보관함으로 이동", "보관함에서 영구 삭제")
+
+/** The part of a suggested name worth retyping: the name without its extension, or all of it for folders and dotfiles. */
+internal fun nameSelection(name: String, folder: Boolean): TextRange {
+    val dot = name.lastIndexOf('.')
+    return if (folder || dot <= 0) TextRange(0, name.length) else TextRange(0, dot)
+}
+
 @Composable
 internal fun FileActions(state: ExplorerState, model: ExplorerViewModel, command: String? = null, onConsumed: () -> Unit = {}) {
     var action by rememberSaveable { mutableStateOf<String?>(null) }
-    var name by rememberSaveable { mutableStateOf("") }
-    LaunchedEffect(command) { if (command != null) { action = command; name = when (command) { "이름 변경" -> model.selection().singleOrNull()?.name.orEmpty(); "ZIP 만들기" -> "Archive.zip"; "새 파일" -> "새 텍스트.txt"; else -> "" }; onConsumed() } }
+    var name by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue()) }
+    LaunchedEffect(command) { if (command != null) {
+        action = command
+        val target = model.selection().singleOrNull()
+        val suggested = when (command) { "이름 변경" -> target?.name.orEmpty(); "ZIP 만들기" -> "Archive.zip"; "새 파일" -> "새 텍스트.txt"; else -> "" }
+        name = TextFieldValue(suggested, nameSelection(suggested, command == "이름 변경" && target?.isDirectory == true))
+        onConsumed()
+    } }
     val selection = model.selection()
     if (action == "일괄 이름 변경") { BatchRenameDialog(model) { action = null }; return }
-    action?.let { title -> AlertDialog(onDismissRequest = { action = null }, title = { Text(title) }, text = {
-        Column(Modifier.verticalScroll(rememberScrollState())) {
+    action?.let { title ->
+        val naming = title !in CONFIRM_ONLY
+        val renaming = selection.singleOrNull()?.takeIf { title == "이름 변경" }
+        val finalName = if (title == "ZIP 만들기" && !name.text.endsWith(".zip", true)) "${name.text}.zip" else name.text
+        val taken = remember(state.entries) { state.entries.map { it.name } }
+        val problem = if (naming) fileNameProblem(finalName, taken, renaming?.name) else null
+        // An empty field just opened is not an error yet; say so only after typing.
+        var touched by remember(title) { mutableStateOf(false) }
+        val ready = !naming || (problem == null && finalName != renaming?.name)
+        fun confirm() {
+            if (!ready) { touched = true; return }
             when (title) {
-                "휴지통으로 이동" -> Text("${selection.size}개 항목을 휴지통에 보관합니다. 복원할 수 있으며, 보관할 수 없으면 삭제하지 않습니다.")
-                "파일 정보" -> selection.singleOrNull()?.let { FileInfo(it, model) }
-                else -> OutlinedTextField(name, { name = it }, label = { Text("이름") }, singleLine = true)
+                "휴지통으로 이동" -> model.enqueue("TRASH")
+                "잠금 보관함으로 이동" -> model.moveToVault(selection)
+                "보관함에서 영구 삭제" -> model.deleteFromVault(selection)
+                "새 파일" -> model.newFile(finalName)
+                "새 폴더" -> model.enqueue("MKDIR", emptyList(), state.location!!.child(finalName))
+                "이름 변경" -> model.enqueue("RENAME", extra = JSONObject().put("name", finalName))
+                "ZIP 만들기" -> model.enqueue("ZIP", destination = state.location!!.child(finalName))
+            }
+            action = null
+        }
+        val focus = remember { FocusRequester() }
+        if (naming) LaunchedEffect(title) { focus.requestFocus() }
+        AlertDialog(onDismissRequest = { action = null }, title = { Text(title) }, text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                when (title) {
+                    "휴지통으로 이동" -> Text("${selection.size}개 항목을 휴지통에 보관합니다. 복원할 수 있으며, 보관할 수 없으면 삭제하지 않습니다.")
+                    "잠금 보관함으로 이동" -> Text("${selection.size}개 파일을 암호화해 잠금 보관함에 넣고 원본은 지웁니다. 지문이나 화면 잠금으로만 열 수 있습니다. 휴대폰 화면 잠금을 없애거나 앱을 삭제하면 보관함 파일은 되살릴 수 없습니다.")
+                    "보관함에서 영구 삭제" -> Text("${selection.size}개 파일을 보관함에서 영구 삭제합니다. 휴지통을 거치지 않으며 되돌릴 수 없습니다.")
+                    "파일 정보" -> selection.singleOrNull()?.let { FileInfo(it, model) }
+                    else -> {
+                        val shown = problem?.takeIf { touched || name.text.isNotEmpty() }
+                        OutlinedTextField(name, { name = it; touched = true }, label = { Text("이름") }, singleLine = true, isError = shown != null,
+                            supportingText = { Text(shown ?: if (title == "ZIP 만들기" && !name.text.endsWith(".zip", true) && name.text.isNotBlank()) "‘$finalName’으로 만듭니다." else "") },
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { confirm() }),
+                            modifier = Modifier.fillMaxWidth().focusRequester(focus).testTag("name-field"))
+                    }
+                }
+            }
+        }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = ::confirm, enabled = ready, modifier = Modifier.testTag("name-confirm")) {
+            Text(when (title) { "파일 정보" -> "닫기"; "휴지통으로 이동" -> "휴지통으로 이동"; "잠금 보관함으로 이동" -> "옮기기"; "보관함에서 영구 삭제" -> "영구 삭제"; "이름 변경" -> "바꾸기"; else -> "만들기" })
+        } }, dismissButton = { if (title != "파일 정보") TextButton(shape = MaterialTheme.shapes.small, onClick = { action = null }) { Text("취소") } })
+    }
+}
+
+
+/** Each phone folder mirrored to a server: on/off, a pass now, and removal. */
+@Composable
+private fun BackupSettings(model: ExplorerViewModel) {
+    val rules by model.backups.collectAsStateWithLifecycle()
+    val tasks by model.graph.dao.tasks().collectAsStateWithLifecycle(emptyList())
+    GroupCard(Modifier.testTag("backup-settings")) {
+        if (rules.isEmpty()) Text("휴대폰 폴더를 연 뒤 더보기 메뉴의 ‘이 폴더 자동 백업’으로 서버 폴더를 고르면, 새 파일을 와이파이에서 ${com.quickfiles.app.operations.BackupScheduler.INTERVAL_HOURS}시간마다 올립니다. 서버나 휴대폰의 파일은 지우지 않습니다.",
+            Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        rules.forEachIndexed { index, rule ->
+            if (index > 0) GroupDivider()
+            val last = rule.lastTask?.let { id -> tasks.firstOrNull { it.id == id } }
+            Column(Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${model.sourceName(rule.source.sourceId)} / ${rule.source.path}", style = MaterialTheme.typography.bodyLarge)
+                        Text("→ ${model.sourceName(rule.destination.sourceId)} / ${rule.destination.path.ifEmpty { "(최상위)" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(rule.enabled, { model.setBackupEnabled(rule, it) }, modifier = Modifier.semantics { contentDescription = "${rule.source.path} 자동 백업" })
+                }
+                Text(when {
+                    last != null && last.state in com.quickfiles.app.operations.BackupRules.ACTIVE -> "백업 중 · ${last.message}"
+                    last != null -> "마지막 백업 ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(last.updated))} · ${last.message}"
+                    else -> "아직 백업하지 않았습니다."
+                }, style = MaterialTheme.typography.bodySmall, color = if (last?.state == "FAILED") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PillButton("지금 백업", { model.backupNow(rule) }, enabled = last?.state !in com.quickfiles.app.operations.BackupRules.ACTIVE)
+                    PillButton("삭제", { model.removeBackup(rule) })
+                }
             }
         }
-    }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = {
-        when (title) {
-            "휴지통으로 이동" -> model.enqueue("TRASH")
-            "새 파일" -> model.newFile(name)
-            "새 폴더" -> runCatching { requireFileName(name); model.enqueue("MKDIR", emptyList(), state.location!!.child(name)) }.onFailure { model.notice(it.message) }
-            "이름 변경" -> runCatching { requireFileName(name); model.enqueue("RENAME", extra = JSONObject().put("name", name)) }.onFailure { model.notice(it.message) }
-            "ZIP 만들기" -> runCatching { requireFileName(name); model.enqueue("ZIP", destination = state.location!!.child(if (name.endsWith(".zip", true)) name else "$name.zip")) }.onFailure { model.notice(it.message) }
-        }
-        action = null
-    }) { Text(if (title == "파일 정보") "닫기" else "확인") } }, dismissButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { action = null }) { Text("취소") } }) }
+    }
 }

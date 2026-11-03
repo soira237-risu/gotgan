@@ -1,5 +1,6 @@
 package com.quickfiles.app
 
+import coil3.request.crossfade
 import android.content.Context
 import com.quickfiles.app.data.*
 import com.quickfiles.app.operations.OperationEngine
@@ -20,19 +21,23 @@ class AppGraph(context: Context, val repository: StorageRepository = StorageRepo
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val dao = ExplorerDatabase.get(app).dao()
     val settings = SettingsStore(app)
-    val cache = ContentCache(File(app.cacheDir, "content-v1")) { settings.settings.first().cacheMiB * 1024L * 1024 }
+    val cache = ContentCache(File(app.cacheDir, "content-v1"), repository.offline::copyOf) { settings.settings.first().cacheMiB * 1024L * 1024 }
     val operations = OperationEngine(dao, repository::provider, File(app.filesDir, "transfer-staging"), cache::channel)
     val playback = com.quickfiles.app.playback.PlaybackConnection(app)
     val imageLoader = coil3.ImageLoader.Builder(app).components {
         add(com.quickfiles.app.viewer.SniffingSvgDecoderFactory()); add(coil3.gif.AnimatedImageDecoder.Factory())
     }.build()
     // Default bitmap decoder keeps grid GIFs still; animated decoding belongs to the viewer.
-    val thumbnailLoader = coil3.ImageLoader.Builder(app).components { add(com.quickfiles.app.viewer.SniffingSvgDecoderFactory()) }.build()
+    // Thumbnails that arrive from disk or the network fade in over the type icon (memory-cache hits appear at once).
+    val thumbnailLoader = coil3.ImageLoader.Builder(app).components { add(com.quickfiles.app.viewer.SniffingSvgDecoderFactory()) }
+        .crossfade(com.quickfiles.app.ui.MaterialMotion.THUMBNAIL_FADE_MS).build()
     val thumbnailRequests = kotlinx.coroutines.sync.Semaphore(2)
     val mediaThumbnails = com.quickfiles.app.storage.MediaThumbnails(File(app.cacheDir, "media-thumbs"))
     /** Remote video frames read up to [com.quickfiles.app.storage.MediaThumbnails.REMOTE_BUDGET] each, so they wait for an unmetered network. */
     fun unmetered(): Boolean = app.getSystemService(android.net.ConnectivityManager::class.java)?.isActiveNetworkMetered == false
     val ready = scope.async { dao.recoverTasks() }
+    /** Phone folders mirrored to servers on Wi-Fi; see [com.quickfiles.app.operations.BackupScheduler]. */
+    val backups = com.quickfiles.app.operations.BackupRules(dao).also { rules -> scope.launch { runCatching { rules.load() } } }
     val workspace = com.quickfiles.app.ui.WorkspaceController(this)
     /** Cache copies handed to apps that asked Gotgan to pick a file; pinned so eviction cannot pull them away mid-read. */
     val pickedLeases = java.util.ArrayDeque<ContentCache.Lease>()

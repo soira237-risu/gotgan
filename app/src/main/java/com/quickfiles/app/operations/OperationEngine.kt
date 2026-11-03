@@ -112,7 +112,7 @@ class OperationEngine(
         val data = payload(task)
         val sources = data.getJSONArray("sources")
         // Received files sit in app storage like phone files, so they never need the network either.
-        if ((0 until sources.length()).any { decodeLocation(sources.getString(it)).sourceId.let { id -> !isLocalSource(id) && id != INBOX_SOURCE } }) return true
+        if ((0 until sources.length()).any { decodeLocation(sources.getString(it)).sourceId.let { id -> !isDeviceSource(id) } }) return true
         if (data.optString("destination").takeIf { it.isNotEmpty() && it != "null" }?.let { !isLocalSource(decodeLocation(it).sourceId) } == true) return true
         val trashIds = data.optJSONArray("trashIds") ?: return false
         return (0 until trashIds.length()).any { dao.trash(trashIds.getString(it))?.source?.let(::isLocalSource) != true }
@@ -158,6 +158,13 @@ class OperationEngine(
                             val source = decodeLocation(target)
                             requireDestination(source, requireNotNull(destination))
                             transfer(task.id, source, destination.child(source.path.substringAfterLast('/')), policy, task.kind == "MOVE", onProgress)
+                        }
+                        // A backup mirrors a phone folder into a server folder: files already there are skipped, which is success.
+                        "BACKUP" -> {
+                            val source = decodeLocation(target)
+                            requireDestination(source, requireNotNull(destination))
+                            transfer(task.id, source, destination.child(source.path.substringAfterLast('/').ifEmpty { "백업" }), ConflictPolicy.MERGE, false, onProgress)
+                            true
                         }
                         "RENAME" -> {
                             val source = decodeLocation(target)

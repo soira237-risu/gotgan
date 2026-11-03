@@ -53,9 +53,42 @@ enum class SortDirection(val label: String) { ASCENDING("오름차순"), DESCEND
 data class SortSpec(val order: SortOrder = SortOrder.NAME, val direction: SortDirection = legacyDirection(order))
 fun legacyDirection(order: SortOrder) = if (order == SortOrder.NAME) SortDirection.ASCENDING else SortDirection.DESCENDING
 
+/**
+ * File-name order as people count: digit runs compare by value, so IMG_2 comes before IMG_10,
+ * letters ignore case, and names that differ only by case or leading zeros still get a stable order.
+ */
+object NaturalNameOrder : Comparator<String> {
+    override fun compare(a: String, b: String): Int {
+        var i = 0; var j = 0
+        while (i < a.length && j < b.length) {
+            val ca = a[i]; val cb = b[j]
+            if (ca.isAsciiDigit() && cb.isAsciiDigit()) {
+                val endA = digitsEnd(a, i); val endB = digitsEnd(b, j)
+                val startA = skipZeros(a, i, endA); val startB = skipZeros(b, j, endB)
+                val lengths = (endA - startA).compareTo(endB - startB)
+                if (lengths != 0) return lengths
+                for (k in 0 until endA - startA) { val d = a[startA + k].compareTo(b[startB + k]); if (d != 0) return d }
+                i = endA; j = endB
+            } else {
+                val d = ca.lowercaseChar().compareTo(cb.lowercaseChar())
+                if (d != 0) return d
+                i++; j++
+            }
+        }
+        val rest = (a.length - i).compareTo(b.length - j)
+        if (rest != 0) return rest
+        // Equal by value and case: fewer leading zeros first, then the exact characters.
+        val length = a.length.compareTo(b.length)
+        return if (length != 0) length else a.compareTo(b)
+    }
+    private fun Char.isAsciiDigit() = this in '0'..'9'
+    private fun digitsEnd(s: String, from: Int): Int { var k = from; while (k < s.length && s[k].isAsciiDigit()) k++; return k }
+    private fun skipZeros(s: String, from: Int, end: Int): Int { var k = from; while (k < end - 1 && s[k] == '0') k++; return k }
+}
+
 fun sortedEntries(entries: List<FileEntry>, order: SortOrder): List<FileEntry> = sortedEntries(entries, SortSpec(order))
 fun sortedEntries(entries: List<FileEntry>, spec: SortSpec): List<FileEntry> {
-    val names = compareBy<FileEntry> { it.name.lowercase(Locale.ROOT) }.thenBy { it.name }
+    val names = Comparator<FileEntry> { a, b -> NaturalNameOrder.compare(a.name, b.name) }
     val fields = when (spec.order) {
         SortOrder.NAME -> names
         SortOrder.DATE -> compareBy<FileEntry> { it.modified ?: Long.MIN_VALUE }.then(names)
@@ -105,6 +138,19 @@ interface WritableStorageProvider : StorageProvider {
 }
 
 suspend fun StorageProvider.find(location: StorageLocation): FileEntry? = try { stat(location) } catch (e: StorageException) { if (e.kind == StorageError.NOT_FOUND) null else throw e }
+/**
+ * Why [name] cannot be used for a new or renamed item in a folder holding [taken], or null when it can.
+ * [current] is the item's own name while renaming, so changing only its case is allowed.
+ */
+fun fileNameProblem(name: String, taken: Collection<String>, current: String? = null): String? = when {
+    name.isBlank() -> "이름을 입력해 주세요."
+    name == "." || name == ".." -> "‘.’과 ‘..’은 이름으로 쓸 수 없습니다."
+    name.any { it == '/' || it == '\\' } -> "이름에 ‘/’나 ‘\\’는 쓸 수 없습니다."
+    name.any { it == '\u0000' || it.code < 32 } -> "이름에 제어 문자는 쓸 수 없습니다."
+    taken.any { it.equals(name, ignoreCase = true) && !it.equals(current, ignoreCase = true) } -> "같은 이름의 항목이 이미 있습니다."
+    else -> null
+}
+
 fun requireFileName(name: String) { require(name.isNotBlank() && name != "." && name != ".." && name.none { it == '/' || it == '\\' || it == '\u0000' || it.code < 32 }) { "파일 이름을 확인해 주세요." } }
 
 /** Bounded Java 8-compatible read for minSdk 30; cancellation also covers decompression loops. */

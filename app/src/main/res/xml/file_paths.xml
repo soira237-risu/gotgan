@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="shared-preview" path="content-v1/" />
+    <!-- Server files kept on the phone, and vault files decrypted while the vault is unlocked. -->
+    <files-path name="offline" path="offline/" />
+    <files-path name="vault-open" path="vault-open/" />
     <!-- Only exact, explicitly selected files receive temporary URI grants. No prefix grants. -->
     <external-path name="phone" path="." />
     <!-- Removable volumes (/storage/XXXX-XXXX) for USB and SD card files. -->

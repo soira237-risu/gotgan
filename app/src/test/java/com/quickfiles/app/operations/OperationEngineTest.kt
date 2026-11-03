@@ -34,6 +34,35 @@ class OperationEngineTest {
         assertEquals("verified original", phone.text("input.txt"))
         assertEquals("RESTORED", journal.trash(trash.id)!!.state)
     }
+    @Test fun backupUploadsOnlyNewFilesAndCountsExistingOnesAsDone() = runBlocking {
+        phone.folder("DCIM"); phone.folder("DCIM/Camera"); phone.file("DCIM/Camera/1.jpg", "one"); nas.folder("backup")
+        val engine = engine()
+        val rules = BackupRules(journal)
+        val rule = BackupRule(source = StorageLocation("phone", "DCIM/Camera"), destination = StorageLocation("nas", "backup"))
+        rules.save(rule)
+        val first = rules.run(engine, rules.rules.value.single())!!
+        assertNull("A queued pass is not queued twice", rules.run(engine, rules.rules.value.single()))
+        engine.drain()
+        assertEquals("COMPLETE", journal.task(first)!!.state)
+        assertEquals("one", nas.text("backup/Camera/1.jpg"))
+        nas.file("backup/Camera/1.jpg", "edited on the server")
+        phone.file("DCIM/Camera/2.jpg", "two")
+        val second = rules.run(engine, rules.rules.value.single())!!
+        engine.drain()
+        assertEquals("Existing files are success, not a partial failure", "COMPLETE", journal.task(second)!!.state)
+        assertEquals("two", nas.text("backup/Camera/2.jpg"))
+        assertEquals("A backup never overwrites the server copy", "edited on the server", nas.text("backup/Camera/1.jpg"))
+        assertEquals("one", phone.text("DCIM/Camera/1.jpg"))
+        assertEquals(second, rules.load().single().lastTask)
+    }
+    @Test fun backupRulesRoundTripAndRejectWrongDirections() {
+        val rule = BackupRule(source = StorageLocation("phone", "DCIM/Camera"), destination = StorageLocation("nas", "backup"), enabled = false, lastRun = 5, lastTask = "t")
+        assertEquals(rule, BackupRule.decode(rule.encode()))
+        assertThrows(IllegalArgumentException::class.java) { BackupRule(source = StorageLocation("nas", "a"), destination = StorageLocation("nas", "b")) }
+        assertThrows(IllegalArgumentException::class.java) { BackupRule(source = StorageLocation("phone", "a"), destination = StorageLocation("phone", "b")) }
+        assertThrows(IllegalArgumentException::class.java) { BackupRule(source = StorageLocation("phone"), destination = StorageLocation("nas", "b")) }
+        assertNull(BackupRule.decode("{not json"))
+    }
     @Test fun batchRenameGivesEachSourceItsOwnNameAndNewFileIsEmpty() = runBlocking {
         phone.file("a.txt", "first"); phone.file("b.txt", "second"); phone.file("taken.txt", "keep")
         val engine = engine()

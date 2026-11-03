@@ -93,7 +93,7 @@ internal fun PreviewScreen(preview: PreviewState, model: ExplorerViewModel, back
             when {
                 preview.loading -> Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Text(if (preview.read == 0L) "파일을 읽고 있어요…" else "${formatBytes(preview.read)}${preview.total?.let { " / ${formatBytes(it)}" }.orEmpty()}")
+                    Text(if (preview.read == 0L) "파일을 읽고 있습니다…" else "${formatBytes(preview.read)}${preview.total?.let { " / ${formatBytes(it)}" }.orEmpty()}")
                     TextButton(shape = MaterialTheme.shapes.small, onClick = { model.closePreview() }) { Text("취소") }
                 }
                 preview.error != null -> Column(Modifier.padding(20.dp)) {

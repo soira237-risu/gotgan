@@ -37,6 +37,14 @@ object MimeTypes {
     }
 
     /** Whether [mimeType] satisfies any of [accepted] picker patterns, where `*` matches any type or subtype. An empty request accepts everything. */
+    /** One type that covers every shared file, so a share sheet offers only apps that take them: image/jpeg, image/*, or */*. */
+    fun common(types: List<String>): String {
+        val distinct = types.map { it.lowercase() }.distinct()
+        if (distinct.isEmpty()) return ANY
+        if (distinct.size == 1) return distinct.single()
+        val families = distinct.map { it.substringBefore('/') }.distinct()
+        return if (families.size == 1 && families.single() != "*") "${families.single()}/*" else ANY
+    }
     fun accepts(accepted: List<String>, mimeType: String): Boolean {
         if (accepted.isEmpty()) return true
         val (type, sub) = mimeType.lowercase(java.util.Locale.ROOT).split('/', limit = 2).let { it[0] to it.getOrElse(1) { "" } }

@@ -129,7 +129,7 @@ class WorkspaceDeviceTest {
             compose.onNodeWithTag("folder-list").assertExists()
             compose.onNodeWithTag("explorer-menu").performClick(); compose.onNodeWithText("새 폴더").performClick()
             compose.onNode(hasSetTextAction() and hasText("이름")).performTextInput("created-in-ui")
-            compose.onNodeWithText("확인").performClick()
+            compose.onNodeWithTag("name-confirm").performClick()
             compose.waitUntil(30_000) { File(a, "created-in-ui").isDirectory }
             assertNull("Successful queueing must not interrupt with a dialog", first.state.value.notice)
         } finally {

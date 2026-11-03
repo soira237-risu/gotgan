@@ -24,6 +24,17 @@ class ContentCacheTest {
         provider.version++
         cache.full(provider, provider.stat(StorageLocation("two", "b"))).use { assertNotEquals(second.file, it.file) }
     }
+    @Test fun cachedLooksUpOnlyWhatIsAlreadyHereWithoutReading() = runBlocking {
+        val cache = ContentCache(temp.newFolder()) { 4 * 1024 * 1024L }
+        val provider = BytesProvider(ByteArray(1000) { 3 })
+        val entry = provider.stat(StorageLocation("nas", "photo.jpg"))
+        assertNull("Nothing fetched yet", cache.cached(entry))
+        assertTrue("A cache lookup must not read from the server", provider.offsets.isEmpty())
+        val fetched = cache.full(provider, entry).use { it.file }
+        cache.cached(entry)!!.use { assertEquals(fetched, it.file); assertEquals(1000L, it.file.length()) }
+        provider.version++
+        assertNull("A changed file is a different version", cache.cached(provider.stat(entry.location)))
+    }
     @Test fun seekDownloadsOnlyRequestedBlockAndCanFallbackWhenRangeUnsupported() = runBlocking {
         val data = ByteArray(3 * 1024 * 1024) { (it % 251).toByte() }
         val provider = BytesProvider(data)

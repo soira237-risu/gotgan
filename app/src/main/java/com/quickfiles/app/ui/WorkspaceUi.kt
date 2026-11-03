@@ -66,12 +66,13 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
     val context = LocalContext.current; val scope = rememberCoroutineScope()
     var command by rememberSaveable { mutableStateOf<String?>(null) }
     var selectionMenu by remember { mutableStateOf(false) }
-    val openPanel: (String) -> Unit = { if (it == "재생 중") context.startActivity(Intent(context, PlayerActivity::class.java)) else controller.panel(it) }
+    val openPanel: (String) -> Unit = { if (it == "재생 중") com.quickfiles.app.playback.openPlayer(context, music = !first.graph.playback.state.value.video) else controller.panel(it) }
     val previewOwner = workspace.viewerOwner?.takeIf { states[it].preview != null } ?: states.indexOfFirst { it.preview != null }.takeIf { it >= 0 }
     LaunchedEffect(firstState.preview?.entry?.id, secondState.preview?.entry?.id) { controller.viewer(previewOwner) }
     // A closed text, PDF or archive viewer stays on screen while it leaves, so the browser keeps its viewer layout until then.
     val leavingDocument = remember { LeavingDocument() }
     val viewerOwner = previewOwner ?: leavingDocument.owner
+    val leavingSheet = remember { LeavingSheet() }
     val panelDepth = remember { mutableFloatStateOf(0f) }
     val towardStart = if (LocalLayoutDirection.current == LayoutDirection.Rtl) 1f else -1f
     // While a full panel comes in, this screen steps back a quarter of its width and dims slightly.
@@ -166,6 +167,20 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                                                 DropdownMenuItem({ Text("다른 앱으로 열기") }, { selection.singleOrNull()?.let(active::openWith); selectionMenu = false }, enabled = selection.size == 1 && !selection.single().isDirectory)
                                                 DropdownMenuItem({ Text("공유") }, { active.shareSelected(); selectionMenu = false }, enabled = selection.none { it.isDirectory })
                                                 DropdownMenuItem({ Text("파일 정보") }, { command = "파일 정보"; selectionMenu = false }, enabled = selection.size == 1)
+                                                // Server files can be kept on the phone to open without a connection; kept ones can be let go.
+                                                val keptNow by active.kept.collectAsStateWithLifecycle()
+                                                val origins = selection.filter { !it.isDirectory }.map { active.origin(it) }
+                                                if (selection.none { it.isDirectory } && origins.isNotEmpty() && origins.all { it != null }) {
+                                                    if (origins.all { it!!.key in keptNow }) DropdownMenuItem({ Text("기기 보관 해제") }, { active.forgetOffline(selection); selectionMenu = false }, modifier = Modifier.testTag("menu-forget-offline"))
+                                                    else DropdownMenuItem({ Text("기기에 보관") }, { active.keepOffline(selection); selectionMenu = false }, enabled = selection.none { it.location.sourceId == OFFLINE_SOURCE }, modifier = Modifier.testTag("menu-keep-offline"))
+                                                }
+                                                // Phone files can be locked away; vault files can be taken out or deleted for good.
+                                                if (selection.isNotEmpty() && selection.all { !it.isDirectory && isLocalSource(it.location.sourceId) })
+                                                    DropdownMenuItem({ Text("잠금 보관함으로 이동") }, { command = "잠금 보관함으로 이동"; selectionMenu = false }, enabled = canModify, modifier = Modifier.testTag("menu-move-to-vault"))
+                                                if (selection.isNotEmpty() && selection.all { it.location.sourceId == VAULT_SOURCE }) {
+                                                    DropdownMenuItem({ Text("보관함에서 꺼내기") }, { active.takeOutOfVault(selection); selectionMenu = false }, modifier = Modifier.testTag("menu-take-out-vault"))
+                                                    DropdownMenuItem({ Text("영구 삭제") }, { command = "보관함에서 영구 삭제"; selectionMenu = false }, modifier = Modifier.testTag("menu-delete-vault"))
+                                                }
                                                 // One-tap transfer to each plugged-in drive's root; the destination sheet still confirms.
                                                 volumes.filter { !it.readOnly && selection.none { item -> item.location.sourceId == it.sourceId } }.forEach { volume ->
                                                     DropdownMenuItem({ Text("‘${volume.name}’으로 복사") }, { controller.prepare(PendingTransfer(workspace.active, selection.map { it.location }, false, StorageLocation(volume.sourceId))); selectionMenu = false })
@@ -194,12 +209,27 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                 }
                 }
             }
-            previewOwner?.let { owner -> states[owner].preview?.let { preview -> BackHandler(workspace.panel == null && !preview.entry.isImage) { models[owner].closePreview() }; if (preview.entry.isImage) PreviewScreen(preview, models[owner], backEnabled = workspace.panel == null) } }
-            DocumentPreviewTransition(previewOwner, previewOwner?.let { states[it].preview }, previewOwner?.let { models[it] }, leavingDocument)
+            previewOwner?.let { owner -> states[owner].preview?.let { preview -> if (preview.entry.isImage) PreviewScreen(preview, models[owner], backEnabled = workspace.panel == null) } }
+            DocumentPreviewTransition(previewOwner, previewOwner?.let { states[it].preview }, previewOwner?.let { models[it] }, leavingDocument, backEnabled = workspace.panel == null)
+            // Confirmations pass by above the dock (or the viewer's bottom edge) instead of asking for a tap.
+            val snackbars = remember { SnackbarHostState() }
+            states.forEachIndexed { index, folder -> folder.toast?.let { toast -> LaunchedEffect(index, toast.id) {
+                try { snackbars.showSnackbar(toast.message, withDismissAction = true) } finally { models[index].toastShown(toast.id) }
+            } } }
+            SnackbarHost(snackbars, Modifier.align(Alignment.BottomCenter).then(if (viewerOwner != null) Modifier.navigationBarsPadding().padding(bottom = 16.dp) else Modifier.padding(bottom = bottomInset - 16.dp))
+                .padding(horizontal = 16.dp).testTag("toast")) { data ->
+                Snackbar(data, shape = MaterialTheme.shapes.medium)
+            }
         }
         FileActions(state, active, command, { command = null })
         CompositionLocalProvider(LocalPanelDepth provides panelDepth) {
-        when (workspace.panel) {
+        // Sheets leave with their own motion even when state removes them (a finished transfer, a panel switched elsewhere):
+        // the last sheet stays composed, told it is no longer wanted, until its exit has played.
+        val liveSheet = workspace.panel?.takeIf { it in SHEET_PANELS && (it != "목적지" || workspace.pending != null) }
+        if (liveSheet != null) { leavingSheet.panel = liveSheet; workspace.pending?.let { leavingSheet.pending = it } }
+        leavingSheet.panel?.let { sheet -> key(sheet) {
+            CompositionLocalProvider(LocalSheetPresence provides SheetPresence(liveSheet == sheet) { if (leavingSheet.panel == sheet) leavingSheet.panel = null }) {
+            when (sheet) {
             "폴더 전환" -> WorkspaceSheet("폴더 전환", onDismissRequest = { controller.panel(null) }) {
                 Column(Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState())) {
                     states.forEachIndexed { index, folder ->
@@ -219,15 +249,20 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                     }
                 }
             }
-            "목적지" -> workspace.pending?.let { pending -> DestinationPanel(pending, models[pending.owner], { controller.panel(null) }, { controller.panel("목적지 선택") }, controller::cancelPreparation, controller::policy) { policy ->
+            "목적지" -> (workspace.pending ?: leavingSheet.pending)?.let { pending -> DestinationPanel(pending, models[pending.owner], { controller.panel(null) }, { controller.panel("목적지 선택") }, controller::cancelPreparation, controller::policy) { policy ->
                 if (controller.state.value.pending?.submitting == false) {
                     controller.submitting(true)
                     if (pending.archiveEntries != null) models[pending.owner].enqueue("EXTRACT", pending.sources, pending.destination!!.child(pending.outputFolder), extra = org.json.JSONObject().put("entries", org.json.JSONArray(pending.archiveEntries)), onQueued = { controller.cancelPreparation() }, onFinished = { controller.submitting(false) })
                     else models[pending.owner].enqueue(if (pending.move) "MOVE" else "COPY", pending.sources, pending.destination, policy, onQueued = { controller.completePreparation() }, onFinished = { controller.submitting(false) })
                 }
             } }
-            "목적지 선택" -> workspace.pending?.let { pending -> DestinationPicker(models[pending.owner], pending.destination, { controller.panel("목적지") }, controller::destination) }
             "작업 요약" -> WorkspaceSheet("작업", onDismissRequest = { controller.panel(null) }) { TaskSummary(active) { controller.panel("작업") } }
+            }
+            }
+        } }
+        when (workspace.panel) {
+            "백업 위치" -> state.location?.let { folder -> DestinationPicker(active, null, { controller.panel(null) }) { destination -> active.addBackup(folder, destination); controller.panel(null) } }
+            "목적지 선택" -> workspace.pending?.let { pending -> DestinationPicker(models[pending.owner], pending.destination, { controller.panel("목적지") }, controller::destination) }
             "작업", "휴지통", "설정" -> FullPanel(workspace.panel!!, { controller.panel(null) }) { when (workspace.panel) { "작업" -> TasksPanel(active); "휴지통" -> TrashPanel(active); else -> SettingsPanel(active) } }
             "최근 파일" -> FullPanel("최근 파일", { controller.panel(null) }) { RecentFilesPanel(active) { controller.panel(null) } }
             "저장공간 분석" -> FullPanel("저장공간 분석", { active.closeAnalysis(); controller.panel(null) }) { StorageAnalysisPanel(active) { controller.panel(null) } }
@@ -375,6 +410,14 @@ private fun DestinationPicker(model: ExplorerViewModel, initial: StorageLocation
         }
         Button(shape = MaterialTheme.shapes.small, onClick = { location?.let(choose) }, enabled = location != null && writable && !loading && error == null, modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)) { Text("이 폴더 선택") }
     }
+}
+
+private val SHEET_PANELS = setOf("폴더 전환", "목적지", "작업 요약")
+
+/** The sheet on screen and the transfer it shows, kept while it plays its exit after state has moved on. */
+private class LeavingSheet {
+    var panel by mutableStateOf<String?>(null)
+    var pending by mutableStateOf<PendingTransfer?>(null)
 }
 
 private enum class DockMode { EXPANDED, COMPACT, SELECTING, HIDDEN }

@@ -348,7 +348,7 @@ internal fun ImagePreviewScreen(preview: PreviewState, model: ExplorerViewModel,
         when {
             preview.loading -> Column(Modifier.align(Alignment.Center).padding(24.dp)) {
                 CircularProgressIndicator()
-                Text("파일을 읽고 있어요…", color = Color.White)
+                Text("파일을 읽고 있습니다…", color = Color.White)
             }
             preview.error != null -> Surface(Modifier.align(Alignment.Center).padding(24.dp)) { Column(Modifier.padding(16.dp)) {
                 ErrorPanel(preview.error)

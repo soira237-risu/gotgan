@@ -197,7 +197,7 @@ internal class LeavingDocument {
  * and every way of closing it (button, back, cancel, trash) plays the reverse before it is removed.
  * Images keep their own container transform in [ImagePreviewTransition]. */
 @Composable
-internal fun DocumentPreviewTransition(owner: Int?, preview: PreviewState?, model: ExplorerViewModel?, leaving: LeavingDocument) {
+internal fun DocumentPreviewTransition(owner: Int?, preview: PreviewState?, model: ExplorerViewModel?, leaving: LeavingDocument, backEnabled: Boolean = true) {
     val live = preview?.takeUnless { it.entry.isImage }
     if (live != null && owner != null && model != null) { leaving.preview = live; leaving.model = model; leaving.index = owner }
     val shift = with(LocalDensity.current) { 28.dp.roundToPx() } * if (LocalLayoutDirection.current == LayoutDirection.Rtl) -1 else 1
@@ -208,6 +208,28 @@ internal fun DocumentPreviewTransition(owner: Int?, preview: PreviewState?, mode
         DisposableEffect(Unit) { onDispose { leaving.owner = null } }
         val shown = live ?: leaving.preview
         val shownModel = leaving.model
+        // A back swipe previews the close: the document shrinks toward the swipe's far side and rounds its corners,
+        // then leaves the way it came. Handlers inside the viewer (search, archive folders) are registered later and win.
+        var back by remember { mutableFloatStateOf(0f) }
+        var edge by remember { mutableFloatStateOf(1f) }
+        val scope = rememberCoroutineScope()
+        PredictiveBackHandler(backEnabled && live != null) { events ->
+            try {
+                events.collect { edge = if (it.swipeEdge == androidx.activity.BackEventCompat.EDGE_RIGHT) -1f else 1f; back = it.progress.coerceIn(0f, 1f) }
+                shownModel?.closePreview()
+            } catch (cancelled: CancellationException) {
+                scope.launch { animate(back, 0f, animationSpec = MaterialMotion.spatial()) { value, _ -> back = value } }
+                throw cancelled
+            }
+        }
+        val corner = with(LocalDensity.current) { 28.dp.toPx() }
+        Box(Modifier.fillMaxSize().graphicsLayer {
+            scaleX = 1f - .1f * back; scaleY = scaleX
+            translationX = edge * back * 16.dp.toPx()
+            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(if (edge > 0) 1f else 0f, .5f)
+            shape = RoundedCornerShape(corner * back); clip = back > 0f
+        }) {
         if (shown != null && shownModel != null) key(shown.token) { PreviewScreen(shown, shownModel) }
+        }
     }
 }

@@ -2,9 +2,10 @@ package com.quickfiles.app.data
 
 import com.quickfiles.app.storage.FileEntry
 import com.quickfiles.app.storage.INBOX_SOURCE
+import com.quickfiles.app.storage.VAULT_SOURCE
 import org.json.JSONObject
 
-/** Files opened in Gotgan, newest first. Received (inbox) copies are temporary and never recorded. */
+/** Files opened in Gotgan, newest first. Received (inbox) copies are temporary and vault files are private, so neither is recorded. */
 object RecentFiles {
     private const val PREFIX = "opened:"
     const val KEEP = 200
@@ -20,7 +21,7 @@ object RecentFiles {
     }.getOrNull()
 
     suspend fun record(dao: ExplorerDao, entry: FileEntry, now: Long = System.currentTimeMillis()) {
-        if (entry.isDirectory || entry.location.sourceId == INBOX_SOURCE) return
+        if (entry.isDirectory || entry.location.sourceId == INBOX_SOURCE || entry.location.sourceId == VAULT_SOURCE) return
         dao.save(SavedValue(PREFIX + entry.id, encode(entry), now))
         dao.savedValues("$PREFIX%", KEEP + 50).drop(KEEP).forEach { dao.removeSaved(it.key) }
     }

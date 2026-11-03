@@ -17,13 +17,13 @@ import com.quickfiles.app.ui.icons.Symbols
 
 /** Folder-area states. Each one names the cause and offers a way out. */
 internal enum class StateKind(val icon: ImageVector, val title: String, val alarming: Boolean = false) {
-    EMPTY(Symbols.FolderOpen, "이 폴더는 비어 있어요"),
-    NO_MATCH(Symbols.Search, "검색 결과가 없어요"),
-    PERMISSION(Symbols.LockOpen, "휴대폰 파일을 보려면 권한이 필요해요"),
-    AUTH(Symbols.KeyOff, "저장소에 로그인하지 못했어요", alarming = true),
-    CERTIFICATE(Symbols.GppBad, "안전한 연결을 확인할 수 없어요", alarming = true),
-    NETWORK(Symbols.CloudOff, "저장소에 연결할 수 없어요"),
-    FAILED(Symbols.Error, "폴더를 열지 못했어요", alarming = true),
+    EMPTY(Symbols.FolderOpen, "이 폴더는 비어 있습니다"),
+    NO_MATCH(Symbols.Search, "검색 결과가 없습니다"),
+    PERMISSION(Symbols.LockOpen, "휴대폰 파일을 보려면 권한이 필요합니다"),
+    AUTH(Symbols.KeyOff, "저장소에 로그인하지 못했습니다", alarming = true),
+    CERTIFICATE(Symbols.GppBad, "안전한 연결을 확인할 수 없습니다", alarming = true),
+    NETWORK(Symbols.CloudOff, "저장소에 연결할 수 없습니다"),
+    FAILED(Symbols.Error, "폴더를 열지 못했습니다", alarming = true),
 }
 
 /** Classifies a readable storage error. Messages come from the storage providers' fixed wording. */
@@ -64,17 +64,28 @@ internal fun StateMessage(kind: StateKind, body: String, primary: StateAction? =
 
 /** Reading a folder: progress, what is happening, and cancel. */
 @Composable
-internal fun LoadingState(onCancel: () -> Unit, modifier: Modifier = Modifier) {
+internal fun LoadingState(onCancel: () -> Unit, modifier: Modifier = Modifier, grid: Boolean = true) {
     Column(modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         LinearProgressIndicator(Modifier.fillMaxWidth(), strokeCap = androidx.compose.ui.graphics.StrokeCap.Round)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("폴더를 읽고 있어요…", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("폴더를 읽고 있습니다…", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onCancel, shape = CircleShape) { Text("취소") }
         }
-        // Placeholder tiles keep the layout from jumping when the first items arrive.
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Placeholders in the shape of the coming view keep the layout from jumping when the first items arrive.
+        val tone = MaterialTheme.colorScheme.surfaceContainerHigh
+        if (grid) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(1f, .7f, .45f).forEach { alpha ->
-                Box(Modifier.weight(1f).aspectRatio(1f).background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = alpha), MaterialTheme.shapes.medium))
+                Box(Modifier.weight(1f).aspectRatio(1f).background(tone.copy(alpha = alpha), MaterialTheme.shapes.medium))
+            }
+        } else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            listOf(1f, .7f, .45f).forEach { alpha ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.size(40.dp).background(tone.copy(alpha = alpha), MaterialTheme.shapes.small))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(Modifier.fillMaxWidth(.6f).height(14.dp).background(tone.copy(alpha = alpha), CircleShape))
+                        Box(Modifier.fillMaxWidth(.35f).height(10.dp).background(tone.copy(alpha = alpha * .7f), CircleShape))
+                    }
+                }
             }
         }
     }
