@@ -2,7 +2,6 @@ package com.quickfiles.app.viewer
 
 import android.content.*
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.os.*
 import android.os.storage.StorageManager
 import android.system.ErrnoException
@@ -20,11 +19,23 @@ class PdfDocument private constructor(private val context: Context, private val 
     private val service: IPdfService, private val input: ParcelFileDescriptor, private val thread: HandlerThread,
     private val channel: SeekableByteChannel, val pages: Int) : Closeable {
     suspend fun render(page: Int, width: Int): Bitmap = withContext(Dispatchers.IO) {
-        val file = File(context.cacheDir, "pdf-render-${UUID.randomUUID()}.png")
+        val file = File(context.cacheDir, "pdf-render-${UUID.randomUUID()}.raw")
         try {
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_CREATE or ParcelFileDescriptor.MODE_TRUNCATE or ParcelFileDescriptor.MODE_READ_WRITE).use { output -> service.render(page, width, output) }
-            BitmapFactory.decodeFile(file.path) ?: error("PDF 페이지를 표시하지 못했습니다.")
+            decodeRawPage(file)
         } finally { file.delete() }
+    }
+    /** Reads the service's width/height header and ARGB pixels; the sandboxed process is not trusted to size them sensibly. */
+    private fun decodeRawPage(file: File): Bitmap = java.io.FileInputStream(file).channel.use { channel ->
+        val header = ByteBuffer.allocate(8)
+        while (header.hasRemaining()) if (channel.read(header) < 0) error("PDF 페이지를 표시하지 못했습니다.")
+        header.flip()
+        val w = header.int; val h = header.int
+        check(w in 1..PDF_MAX_WIDTH && h in 1..PDF_MAX_HEIGHT && channel.size() == 8L + w.toLong() * h * 4) { "PDF 페이지를 표시하지 못했습니다." }
+        val pixels = ByteBuffer.allocate(w * h * 4)
+        while (pixels.hasRemaining()) if (channel.read(pixels) < 0) error("PDF 페이지를 표시하지 못했습니다.")
+        pixels.flip()
+        Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply { copyPixelsFromBuffer(pixels) }
     }
     override fun close() {
         runCatching { service.close() }; runCatching { context.unbindService(connection) }

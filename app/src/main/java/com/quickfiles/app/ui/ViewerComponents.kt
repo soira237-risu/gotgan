@@ -30,6 +30,7 @@ import com.quickfiles.app.ui.theme.glass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -171,15 +172,39 @@ internal fun PdfDocumentView(preview: PreviewState, model: ExplorerViewModel) {
         PillButton(tone.label, { tone = PageTone.entries[(tone.ordinal + 1) % PageTone.entries.size] },
             Modifier.testTag("pdf-page-tone").semantics { contentDescription = "페이지 밝기: ${tone.label}" }, icon = Symbols.Contrast)
     }
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    // Two fingers zoom the pages (1x-3x); one finger still scrolls. The parent sees the gesture first so the list does not scroll mid-pinch.
+    BoxWithConstraints(Modifier.fillMaxSize().pointerInput(Unit) {
+        awaitEachGesture {
+            awaitFirstDown(requireUnconsumed = false)
+            do {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.changes.count { it.pressed } >= 2) {
+                    val zoom = event.calculateZoom()
+                    if (zoom != 1f) scale = (scale * zoom).coerceIn(1f, 3f)
+                    event.changes.forEach { it.consume() }
+                }
+            } while (event.changes.any { it.pressed })
+        }
+    }) {
     // Pages fit the screen width at 1x and stay centred; zooming widens them and scrolls sideways.
     val pageWidth = (maxWidth - 24.dp) * scale
+    // Pages are drawn for the width they take on screen, in half-step zoom buckets so a pinch does not re-render every frame.
+    val density = LocalDensity.current
+    val renderWidth = with(density) { ((maxWidth - 24.dp).toPx() * (kotlin.math.ceil(scale * 2f) / 2f)).toInt() }.coerceIn(256, com.quickfiles.app.viewer.PDF_MAX_WIDTH)
+    // Height-to-width of pages drawn so far; an unseen page borrows the last one so the list does not jump when it arrives.
+    val ratios = remember(pdf) { mutableStateMapOf<Int, Float>() }
+    var typicalRatio by remember(pdf) { mutableFloatStateOf(1.414f) }
     LazyColumn(state = list, modifier = Modifier.fillMaxSize().testTag("pdf-pages"), verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(bottom = 24.dp)) {
         items(pdf.pages) { index ->
             var bitmap by remember(pdf, index) { mutableStateOf<android.graphics.Bitmap?>(null) }
             var error by remember { mutableStateOf<String?>(null) }
-            LaunchedEffect(pdf, index) { try { bitmap = pdf.render(index, 1440) } catch (e: CancellationException) { throw e } catch (e: Exception) { error = "페이지를 읽지 못했습니다. 파일 또는 연결을 확인해 주세요." } }
+            // A sharper copy replaces the shown one only once it is ready.
+            LaunchedEffect(pdf, index, renderWidth) {
+                if ((bitmap?.width ?: 0) >= renderWidth) return@LaunchedEffect
+                try { bitmap = pdf.render(index, renderWidth).also { ratios[index] = it.height.toFloat() / it.width; typicalRatio = it.height.toFloat() / it.width } }
+                catch (e: CancellationException) { throw e } catch (e: Exception) { error = "페이지를 읽지 못했습니다. 파일 또는 연결을 확인해 주세요." }
+            }
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 error?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error) }
                 bitmap?.let { image ->
@@ -188,7 +213,9 @@ internal fun PdfDocumentView(preview: PreviewState, model: ExplorerViewModel) {
                             .clip(MaterialTheme.shapes.extraSmall).border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.extraSmall),
                             contentScale = ContentScale.FillBounds, colorFilter = tone.filter)
                     }
-                } ?: Box(Modifier.fillMaxWidth().height(480.dp)) { LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) }
+                } ?: Box(Modifier.fillMaxWidth().height(pageWidth * (ratios[index] ?: typicalRatio)), contentAlignment = Alignment.TopCenter) {
+                    if (error == null) LinearProgressIndicator(Modifier.width(pageWidth).padding(horizontal = 12.dp))
+                }
                 Text("${index + 1} / ${pdf.pages}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
