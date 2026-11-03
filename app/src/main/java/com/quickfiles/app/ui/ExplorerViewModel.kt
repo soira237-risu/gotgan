@@ -754,6 +754,40 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             }
         }
     }
+    val backups = graph.backups.rules
+    private fun syncBackups() = com.quickfiles.app.operations.BackupScheduler.sync(getApplication(), graph.backups.rules.value)
+    /** Mirrors a phone folder into a server folder on Wi-Fi from now on, starting with a first pass now. */
+    fun addBackup(source: StorageLocation, destination: StorageLocation) {
+        viewModelScope.launch {
+            try {
+                if (graph.backups.rules.value.any { it.source == source && it.destination == destination }) { notice("이미 같은 자동 백업이 있습니다."); return@launch }
+                val rule = com.quickfiles.app.operations.BackupRule(source = source, destination = destination)
+                graph.backups.save(rule); syncBackups()
+                backupNow(rule)
+                inform("‘${source.path.substringAfterLast('/')}’ 폴더를 와이파이에서 자동 백업합니다.")
+            } catch (e: CancellationException) { throw e }
+            catch (e: IllegalArgumentException) { notice(e.message ?: "자동 백업을 만들 수 없습니다.") }
+            catch (e: Exception) { notice(readableError(e)) }
+        }
+    }
+    fun setBackupEnabled(rule: com.quickfiles.app.operations.BackupRule, enabled: Boolean) {
+        viewModelScope.launch { graph.backups.save(rule.copy(enabled = enabled)); syncBackups() }
+    }
+    fun removeBackup(rule: com.quickfiles.app.operations.BackupRule) {
+        viewModelScope.launch { graph.backups.remove(rule.id); syncBackups(); inform("자동 백업을 삭제했습니다. 이미 올린 파일은 서버에 남아 있습니다.") }
+    }
+    /** Runs one pass now, whatever the network; the scheduled passes still wait for Wi-Fi. */
+    fun backupNow(rule: com.quickfiles.app.operations.BackupRule) {
+        viewModelScope.launch {
+            try {
+                graph.ready.await()
+                val current = graph.backups.rules.value.firstOrNull { it.id == rule.id } ?: rule
+                if (graph.backups.run(graph.operations, current) == null) { inform("이전 백업이 아직 진행 중입니다."); return@launch }
+                TransferScheduler.schedule(getApplication(), true)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { notice(readableError(e)) }
+        }
+    }
     /** Server files kept on the phone, by server location key. */
     val kept = graph.repository.offline.kept
     /** The server location a file stands for: itself, or the original of a kept copy. */

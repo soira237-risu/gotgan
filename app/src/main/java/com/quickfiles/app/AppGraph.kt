@@ -36,6 +36,8 @@ class AppGraph(context: Context, val repository: StorageRepository = StorageRepo
     /** Remote video frames read up to [com.quickfiles.app.storage.MediaThumbnails.REMOTE_BUDGET] each, so they wait for an unmetered network. */
     fun unmetered(): Boolean = app.getSystemService(android.net.ConnectivityManager::class.java)?.isActiveNetworkMetered == false
     val ready = scope.async { dao.recoverTasks() }
+    /** Phone folders mirrored to servers on Wi-Fi; see [com.quickfiles.app.operations.BackupScheduler]. */
+    val backups = com.quickfiles.app.operations.BackupRules(dao).also { rules -> scope.launch { runCatching { rules.load() } } }
     val workspace = com.quickfiles.app.ui.WorkspaceController(this)
     /** Cache copies handed to apps that asked Gotgan to pick a file; pinned so eviction cannot pull them away mid-read. */
     val pickedLeases = java.util.ArrayDeque<ContentCache.Lease>()

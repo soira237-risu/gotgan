@@ -208,6 +208,9 @@ internal fun ExplorerMenuItems(state: ExplorerState, model: ExplorerViewModel, o
         DropdownMenuItem({ Text(if (settings.showHidden) "숨김 파일 감추기" else "숨김 파일 표시") }, { close { model.updateSettings { it.copy(showHidden = !it.showHidden) } } }, leadingIcon = { Icon(Symbols.Visibility, null) })
         DropdownMenuItem({ Text("새로고침") }, { close { model.navigate(state.location, refresh = true) } }, modifier = Modifier.testTag("refresh-folder"), leadingIcon = { Icon(Symbols.Refresh, null) })
         DropdownMenuItem({ Text("전체 선택") }, { close { model.selectAll() } }, enabled = state.entries.isNotEmpty(), leadingIcon = { Icon(Symbols.CheckCircle, null) })
+        // Phone and USB folders can be mirrored to a server folder.
+        if (isLocalSource(state.location.sourceId) && state.location.path.isNotEmpty())
+            DropdownMenuItem({ Text("이 폴더 자동 백업") }, { close { onPanel("백업 위치") } }, modifier = Modifier.testTag("menu-auto-backup"), leadingIcon = { Icon(Symbols.Sync, null) })
         DropdownMenuItem({ Text("저장공간 분석") }, { close { model.analyze(); onPanel("저장공간 분석") } }, modifier = Modifier.testTag("analyze-storage"), leadingIcon = { Icon(Symbols.PieChart, null) })
         HorizontalDivider()
     }

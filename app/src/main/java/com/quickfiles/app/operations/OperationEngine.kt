@@ -159,6 +159,13 @@ class OperationEngine(
                             requireDestination(source, requireNotNull(destination))
                             transfer(task.id, source, destination.child(source.path.substringAfterLast('/')), policy, task.kind == "MOVE", onProgress)
                         }
+                        // A backup mirrors a phone folder into a server folder: files already there are skipped, which is success.
+                        "BACKUP" -> {
+                            val source = decodeLocation(target)
+                            requireDestination(source, requireNotNull(destination))
+                            transfer(task.id, source, destination.child(source.path.substringAfterLast('/').ifEmpty { "백업" }), ConflictPolicy.MERGE, false, onProgress)
+                            true
+                        }
                         "RENAME" -> {
                             val source = decodeLocation(target)
                             // A batch rename carries one new name per source; a single rename carries just "name".

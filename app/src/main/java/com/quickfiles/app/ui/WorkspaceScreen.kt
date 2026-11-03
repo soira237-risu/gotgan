@@ -45,7 +45,7 @@ import org.json.JSONObject
 import java.text.DateFormat
 import java.util.Date
 
-internal fun taskKindLabel(kind: String) = when (kind) { "COPY" -> "복사"; "MOVE" -> "이동"; "RENAME" -> "이름 변경"; "TRASH" -> "휴지통 이동"; "RESTORE" -> "복원"; "PURGE" -> "영구 삭제"; "MKDIR" -> "폴더 생성"; "NEWFILE" -> "파일 생성"; "SAVE", "SAVE_AS" -> "텍스트 저장"; "ZIP" -> "ZIP 만들기"; "EXTRACT" -> "압축 해제"; else -> kind }
+internal fun taskKindLabel(kind: String) = when (kind) { "COPY" -> "복사"; "BACKUP" -> "자동 백업"; "MOVE" -> "이동"; "RENAME" -> "이름 변경"; "TRASH" -> "휴지통 이동"; "RESTORE" -> "복원"; "PURGE" -> "영구 삭제"; "MKDIR" -> "폴더 생성"; "NEWFILE" -> "파일 생성"; "SAVE", "SAVE_AS" -> "텍스트 저장"; "ZIP" -> "ZIP 만들기"; "EXTRACT" -> "압축 해제"; else -> kind }
 
 internal fun taskStateLabel(state: String) = when (state) { "QUEUED" -> "대기"; "RUNNING" -> "진행 중"; "PAUSING" -> "일시정지 중"; "CANCELLING" -> "취소 중"; "PAUSED" -> "일시정지"; "COMPLETE" -> "완료"; "PARTIAL" -> "부분 완료"; "FAILED" -> "실패"; "CANCELLED" -> "취소"; "PREPARING" -> "준비 중"; else -> state }
 
@@ -57,7 +57,7 @@ internal fun taskTone(state: String) = when (state) {
 }
 
 internal fun taskKindIcon(kind: String) = when (kind) {
-    "COPY" -> Symbols.ContentCopy; "MOVE" -> Symbols.DriveFileMove; "RENAME", "SAVE", "SAVE_AS" -> Symbols.Edit
+    "COPY" -> Symbols.ContentCopy; "BACKUP" -> Symbols.Sync; "MOVE" -> Symbols.DriveFileMove; "RENAME", "SAVE", "SAVE_AS" -> Symbols.Edit
     "TRASH", "PURGE" -> Symbols.Delete; "RESTORE" -> Symbols.Refresh; "MKDIR" -> Symbols.CreateNewFolder
     "ZIP" -> Symbols.FolderZip; "EXTRACT" -> Symbols.Unarchive; else -> Symbols.SwapVert
 }
@@ -222,6 +222,8 @@ internal fun SettingsPanel(model: ExplorerViewModel) {
             Slider(settings.cacheMiB.toFloat(), { value -> model.updateSettings { it.copy(cacheMiB = (value / 256).toInt() * 256) } }, valueRange = 256f..4096f, steps = 14,
                 modifier = Modifier.semantics { contentDescription = "미리보기 캐시 한도"; stateDescription = "${settings.cacheMiB}MiB" })
         }
+        SectionLabel("자동 백업")
+        BackupSettings(model)
         SectionLabel("재생")
         GroupCard {
             ToggleRow("영상에서 홈으로 나갈 때 자동 PiP", settings.autoPip) { value -> model.updateSettings { it.copy(autoPip = value) } }
@@ -367,3 +369,36 @@ internal fun FileActions(state: ExplorerState, model: ExplorerViewModel, command
     }
 }
 
+
+/** Each phone folder mirrored to a server: on/off, a pass now, and removal. */
+@Composable
+private fun BackupSettings(model: ExplorerViewModel) {
+    val rules by model.backups.collectAsStateWithLifecycle()
+    val tasks by model.graph.dao.tasks().collectAsStateWithLifecycle(emptyList())
+    GroupCard(Modifier.testTag("backup-settings")) {
+        if (rules.isEmpty()) Text("휴대폰 폴더를 연 뒤 더보기 메뉴의 ‘이 폴더 자동 백업’으로 서버 폴더를 고르면, 새 파일을 와이파이에서 ${com.quickfiles.app.operations.BackupScheduler.INTERVAL_HOURS}시간마다 올립니다. 서버나 휴대폰의 파일은 지우지 않습니다.",
+            Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        rules.forEachIndexed { index, rule ->
+            if (index > 0) GroupDivider()
+            val last = rule.lastTask?.let { id -> tasks.firstOrNull { it.id == id } }
+            Column(Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${model.sourceName(rule.source.sourceId)} / ${rule.source.path}", style = MaterialTheme.typography.bodyLarge)
+                        Text("→ ${model.sourceName(rule.destination.sourceId)} / ${rule.destination.path.ifEmpty { "(최상위)" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(rule.enabled, { model.setBackupEnabled(rule, it) }, modifier = Modifier.semantics { contentDescription = "${rule.source.path} 자동 백업" })
+                }
+                Text(when {
+                    last != null && last.state in com.quickfiles.app.operations.BackupRules.ACTIVE -> "백업 중 · ${last.message}"
+                    last != null -> "마지막 백업 ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(last.updated))} · ${last.message}"
+                    else -> "아직 백업하지 않았습니다."
+                }, style = MaterialTheme.typography.bodySmall, color = if (last?.state == "FAILED") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PillButton("지금 백업", { model.backupNow(rule) }, enabled = last?.state !in com.quickfiles.app.operations.BackupRules.ACTIVE)
+                    PillButton("삭제", { model.removeBackup(rule) })
+                }
+            }
+        }
+    }
+}

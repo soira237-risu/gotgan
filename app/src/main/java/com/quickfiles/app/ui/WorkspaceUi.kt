@@ -254,6 +254,7 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
             }
         } }
         when (workspace.panel) {
+            "백업 위치" -> state.location?.let { folder -> DestinationPicker(active, null, { controller.panel(null) }) { destination -> active.addBackup(folder, destination); controller.panel(null) } }
             "목적지 선택" -> workspace.pending?.let { pending -> DestinationPicker(models[pending.owner], pending.destination, { controller.panel("목적지") }, controller::destination) }
             "작업", "휴지통", "설정" -> FullPanel(workspace.panel!!, { controller.panel(null) }) { when (workspace.panel) { "작업" -> TasksPanel(active); "휴지통" -> TrashPanel(active); else -> SettingsPanel(active) } }
             "최근 파일" -> FullPanel("최근 파일", { controller.panel(null) }) { RecentFilesPanel(active) { controller.panel(null) } }
