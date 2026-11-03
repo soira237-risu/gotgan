@@ -15,6 +15,7 @@ class FileKindTest {
     @Test fun mediaAndDocumentsLandInOneKind() {
         assertEquals(setOf(FileKind.IMAGE), kinds("제주_노을.JPG"))
         assertEquals(setOf(FileKind.IMAGE), kinds("photo.heic"))
+        listOf("IMG_0001.DNG", "DSC_0002.nef", "logo.svg", "favicon.ico", "scan.jfif").forEach { assertEquals(it, setOf(FileKind.IMAGE), kinds(it)) }
         assertEquals(setOf(FileKind.VIDEO), kinds("강의_03.mp4"))
         assertEquals(setOf(FileKind.AUDIO), kinds("녹음.m4a"))
         assertEquals(setOf(FileKind.DOCUMENT), kinds("견적서.pdf"))

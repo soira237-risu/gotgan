@@ -20,9 +20,11 @@ class AppGraph(context: Context, val repository: StorageRepository = StorageRepo
     val cache = ContentCache(File(app.cacheDir, "content-v1")) { settings.settings.first().cacheMiB * 1024L * 1024 }
     val operations = OperationEngine(dao, repository::provider, File(app.filesDir, "transfer-staging"), cache::channel)
     val playback = com.quickfiles.app.playback.PlaybackConnection(app)
-    val imageLoader = coil3.ImageLoader.Builder(app).components { add(coil3.gif.AnimatedImageDecoder.Factory()) }.build()
+    val imageLoader = coil3.ImageLoader.Builder(app).components {
+        add(com.quickfiles.app.viewer.SniffingSvgDecoderFactory()); add(coil3.gif.AnimatedImageDecoder.Factory())
+    }.build()
     // Default bitmap decoder keeps grid GIFs still; animated decoding belongs to the viewer.
-    val thumbnailLoader = coil3.ImageLoader.Builder(app).build()
+    val thumbnailLoader = coil3.ImageLoader.Builder(app).components { add(com.quickfiles.app.viewer.SniffingSvgDecoderFactory()) }.build()
     val thumbnailRequests = kotlinx.coroutines.sync.Semaphore(2)
     val ready = scope.async { dao.recoverTasks() }
     val workspace = com.quickfiles.app.ui.WorkspaceController(this)
