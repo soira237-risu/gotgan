@@ -58,6 +58,7 @@ for cls in $classes; do
     pid=$(adb shell pidof $pkg 2>/dev/null | tr -d '\r')
     [[ -n "$pid" ]] && adb shell debuggerd -j "$pid" > "$out/${cls//#/_}-stacks.txt" 2>&1
     adb exec-out screencap -p > "$out/${cls//#/_}-screen.png" 2>/dev/null
+    adb shell dumpsys activity activities > "$out/${cls//#/_}-activities.txt" 2>&1
     adb shell am force-stop $pkg
   # `am instrument` exits 0 even when tests fail, so read its report.
   elif grep -q '^OK (' "$log" && ! grep -q 'FAILURES!!!\|INSTRUMENTATION_FAILED\|Process crashed\|UI_STATE_RESTORE_FAILED' "$log"; then

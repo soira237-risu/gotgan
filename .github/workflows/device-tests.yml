@@ -62,7 +62,8 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # A booted snapshot saves a cold boot on later runs.
+      # A booted snapshot saves a cold boot on later runs. ATD images leave out the launcher and
+      # Google apps, which otherwise compete with the app for the runner's CPUs.
       - name: Emulator image cache
         id: avd-cache
         uses: actions/cache@v4
@@ -70,16 +71,18 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-${{ env.API_LEVEL }}-google_apis-x86_64-pixel_6
+          key: avd-${{ env.API_LEVEL }}-aosp_atd-x86_64-pixel_6-c4
 
       - name: Create emulator snapshot
         if: steps.avd-cache.outputs.cache-hit != 'true'
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ env.API_LEVEL }}
-          target: google_apis
+          target: aosp_atd
           arch: x86_64
           profile: pixel_6
+          cores: 4
+          ram-size: 4096M
           force-avd-creation: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: false
@@ -94,13 +97,18 @@ jobs:
           DEVICE_TEST_SHARD: ${{ matrix.shard }}/4
         with:
           api-level: ${{ env.API_LEVEL }}
-          target: google_apis
+          target: aosp_atd
           arch: x86_64
           profile: pixel_6
+          cores: 4
+          ram-size: 4096M
           force-avd-creation: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: .github/device-tests/run.sh "$TESTS"
+          # Same 411 dp wide screen as a Pixel 6 with fewer pixels: the emulator renders in software.
+          script: |
+            adb shell wm size 720x1600 && adb shell wm density 280
+            .github/device-tests/run.sh "$TESTS"
 
       - name: Device test output
         if: always()
