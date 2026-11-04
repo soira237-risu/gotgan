@@ -23,7 +23,7 @@ import androidx.media3.common.Player
 import kotlinx.coroutines.delay
 
 internal val PlayerIvory = Color(0xFFFAF9F5)
-internal val PlayerApricot = Color(0xFFF0A889)
+
 /** Neutral media glass: palette tints never shift the picture's colors. */
 internal val PlayerPanel = Color(0xB81C1C1E)
 
@@ -73,7 +73,7 @@ internal fun PlayerSeekHint(preview: SeekPreview, modifier: Modifier = Modifier)
     val delta = (preview.target - preview.origin) / 1000
     Column(modifier.background(PlayerPanel, RoundedCornerShape(24.dp)).border(1.dp, Color.White.copy(alpha = .14f), RoundedCornerShape(24.dp)).padding(horizontal = 24.dp, vertical = 12.dp)
         .testTag("player-seek-preview"), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("${if (delta < 0) "−" else "+"}${kotlin.math.abs(delta)}초", color = PlayerApricot, fontSize = 28.sp)
+        Text("${if (delta < 0) "−" else "+"}${kotlin.math.abs(delta)}초", color = MaterialTheme.colorScheme.primary, fontSize = 28.sp)
         Text(clockText(preview.target), color = PlayerIvory, fontSize = 16.sp, modifier = Modifier.testTag("player-seek-target"))
         Text(if (preview.fine) "정밀 탐색 · 1/5" else "아래로 내리면 정밀 탐색", color = PlayerIvory,
             style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("player-seek-mode"))
@@ -105,7 +105,7 @@ internal fun PlayerTimeline(player: Player?, detail: PlaybackDetails, preview: S
             track = { slider ->
                 Box(Modifier.fillMaxWidth().height(4.dp).background(Color.White.copy(alpha = .22f), CircleShape)) {
                     Box(Modifier.fillMaxWidth((slider.value / detail.duration.coerceAtLeast(1)).coerceIn(0f, 1f))
-                        .fillMaxHeight().background(if (detail.seekable) PlayerApricot else Color.Gray, CircleShape))
+                        .fillMaxHeight().background(if (detail.seekable) MaterialTheme.colorScheme.primary else Color.Gray, CircleShape))
                 }
             },
             modifier = modifier.heightIn(min = 48.dp).testTag("player-timeline").semantics {

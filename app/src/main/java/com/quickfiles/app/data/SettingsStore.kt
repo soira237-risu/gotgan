@@ -13,7 +13,9 @@ enum class GridDensity(val label: String, val minimumWidth: Int) {
 }
 enum class ThemeMode(val label: String) { SYSTEM("시스템 따르기"), LIGHT("밝게"), DARK("어둡게") }
 enum class ColorTheme(val label: String) {
-    TERRACOTTA("테라코타"), BLUE("블루"), SAGE("세이지 그린"), LAVENDER("라벤더"), ROSE("로즈"), MONOCHROME("흑백")
+    TERRACOTTA("테라코타"), BLUE("블루"), SAGE("세이지 그린"), LAVENDER("라벤더"), ROSE("로즈"), MONOCHROME("흑백"),
+    /** Material You colours from the wallpaper, Android 12 and later. */
+    DYNAMIC("배경화면 색")
 }
 /** Reading paper for text files; AUTO follows the app's light/dark choice. */
 enum class TextPaper(val label: String) { AUTO("테마 따라"), LIGHT("밝게"), DARK("어둡게"), BLACK("검정") }

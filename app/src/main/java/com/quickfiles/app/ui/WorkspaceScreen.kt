@@ -195,7 +195,7 @@ internal fun SettingsPanel(model: ExplorerViewModel) {
             ToggleRow("OLED 검정 · 어둡게일 때 완전한 검정 배경", settings.oledBlack) { value -> model.updateSettings { it.copy(oledBlack = value) } }
         }
         SectionLabel("색상 테마")
-        ColorThemeChoices(settings.colorTheme, settings.theme) { color -> model.updateSettings { it.copy(colorTheme = color) } }
+        ColorThemeChoices(settings.colorTheme) { color -> model.updateSettings { it.copy(colorTheme = color) } }
         SectionLabel("목록 간격")
         GroupCard {
             ListDensity.entries.forEachIndexed { index, value -> if (index > 0) GroupDivider(); ChoiceRow(value.label, settings.listDensity == value,

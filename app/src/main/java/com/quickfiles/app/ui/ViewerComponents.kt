@@ -22,10 +22,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.semantics.stateDescription
 import com.quickfiles.app.ui.theme.GlassLevel
 import com.quickfiles.app.ui.theme.LocalGlass
+import com.quickfiles.app.ui.theme.LocalThemeExtras
+import com.quickfiles.app.ui.theme.ThemeExtras
 import com.quickfiles.app.ui.theme.glass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -89,7 +90,7 @@ internal fun TextDocumentView(preview: PreviewState, model: ExplorerViewModel) {
             TextPaper.entries.forEach { paper ->
                 FilterChip(settings.textPaper == paper, { model.updateSettings { it.copy(textPaper = paper) } }, label = { Text(paper.label) },
                     shape = androidx.compose.foundation.shape.CircleShape, modifier = Modifier.testTag("text-paper-${paper.name.lowercase()}"),
-                    leadingIcon = if (paper == TextPaper.AUTO) null else ({ Box(Modifier.size(14.dp).background(paperColors(paper, Color.White, Color.Black).first, androidx.compose.foundation.shape.CircleShape)
+                    leadingIcon = if (paper == TextPaper.AUTO) null else ({ Box(Modifier.size(14.dp).background(paperColors(paper, Color.White, Color.Black, LocalThemeExtras.current).first, androidx.compose.foundation.shape.CircleShape)
                         .border(1.dp, MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.CircleShape)) }))
             }
         }
@@ -105,7 +106,7 @@ internal fun TextDocumentView(preview: PreviewState, model: ExplorerViewModel) {
         OutlinedTextField(search, { search = it }, placeholder = { Text("읽은 내용에서 검색") }, singleLine = true, shape = CircleShape, leadingIcon = { Icon(Symbols.Search, null) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).semantics { contentDescription = "읽은 내용에서 검색" })
         if (search.isNotEmpty()) Text("일치하는 줄 ${lines.size}개", Modifier.padding(horizontal = 16.dp))
         val scroll = remember(preview.entry.id, preview.cp949, search, doc.start) { LazyListState() }
-        val (paperColor, body) = paperColors(settings.textPaper, MaterialTheme.colorScheme.background, MaterialTheme.colorScheme.onSurface)
+        val (paperColor, body) = paperColors(settings.textPaper, MaterialTheme.colorScheme.background, MaterialTheme.colorScheme.onSurface, LocalThemeExtras.current)
         LazyColumn(state = scroll, modifier = Modifier.weight(1f).fillMaxWidth().background(paperColor).testTag("text-preview").then(if (settings.wrapText) Modifier else Modifier.horizontalScroll(rememberScrollState())), contentPadding = PaddingValues(16.dp)) {
             items(lines.size) { index -> Text(lines[index].ifEmpty { " " }, color = body, fontFamily = FontFamily.Monospace, fontSize = settings.textSize.sp, softWrap = settings.wrapText) }
         }
@@ -131,10 +132,10 @@ internal fun TextDocumentView(preview: PreviewState, model: ExplorerViewModel) {
  * Paper and ink for text files. Dark papers lower body contrast slightly (86%) to reduce halation,
  * staying well above 4.5:1.
  */
-internal fun paperColors(paper: TextPaper, themeBackground: Color, themeInk: Color): Pair<Color, Color> = when (paper) {
-    TextPaper.AUTO -> themeBackground to if (themeBackground.luminance() < .5f) themeInk.copy(alpha = .86f) else themeInk
-    TextPaper.LIGHT -> Color(0xFFFAF9F5) to Color(0xFF30251F)
-    TextPaper.DARK -> Color(0xFF1B1714) to Color(0xFFF3E9DE).copy(alpha = .86f)
+internal fun paperColors(paper: TextPaper, themeBackground: Color, themeInk: Color, extras: ThemeExtras): Pair<Color, Color> = when (paper) {
+    TextPaper.AUTO -> themeBackground to if (extras.dark) themeInk.copy(alpha = .86f) else themeInk
+    TextPaper.LIGHT -> extras.lightPaper
+    TextPaper.DARK -> extras.darkPaper.let { (paper, ink) -> paper to ink.copy(alpha = .86f) }
     TextPaper.BLACK -> Color.Black to Color(0xFFF5F5F5).copy(alpha = .86f)
 }
 
@@ -153,7 +154,7 @@ internal fun PdfDocumentView(preview: PreviewState, model: ExplorerViewModel) {
     var scale by remember { mutableFloatStateOf(1f) }
     val scope = rememberCoroutineScope()
     // White pages glare in dark mode: default to dimmed pages there, with original and inverted options.
-    val dark = MaterialTheme.colorScheme.background.luminance() < .5f
+    val dark = LocalThemeExtras.current.dark
     var tone by rememberSaveable(dark) { mutableStateOf(if (dark) PageTone.DIM else PageTone.ORIGINAL) }
     LaunchedEffect(preview.entry.id) {
         val saved = model.graph.dao.saved("pdf:${preview.entry.id}")?.value?.toIntOrNull() ?: 0

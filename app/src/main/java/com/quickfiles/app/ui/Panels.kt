@@ -4,10 +4,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
+import com.quickfiles.app.ui.theme.LocalThemeExtras
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 
@@ -45,7 +45,7 @@ internal fun StatusChip(label: String, tone: StatusTone) {
     val colors = MaterialTheme.colorScheme
     val (background, foreground) = when (tone) {
         StatusTone.ACTIVE -> colors.primaryContainer to colors.onPrimaryContainer
-        StatusTone.DONE -> Color(0xFF2E6B40).copy(alpha = .16f) to if (colors.background.red < .5f) Color(0xFFA8DAB5) else Color(0xFF1E5A30)
+        StatusTone.DONE -> LocalThemeExtras.current.let { it.successContainer to it.onSuccessContainer }
         StatusTone.PROBLEM -> colors.errorContainer to colors.onErrorContainer
         StatusTone.IDLE -> colors.surfaceContainerHighest to colors.onSurfaceVariant
     }

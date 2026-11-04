@@ -14,6 +14,8 @@ import com.quickfiles.app.data.*
 import com.quickfiles.app.storage.*
 import com.quickfiles.app.ui.ExplorerViewModel
 import com.quickfiles.app.ui.theme.appColors
+import com.quickfiles.app.ui.theme.dynamicColorAvailable
+import com.quickfiles.app.ui.theme.themeColors
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -98,7 +100,7 @@ class AppearanceSettingsDeviceTest {
         try {
             for (mode in listOf(ThemeMode.LIGHT, ThemeMode.DARK)) {
                 runBlocking { graph.settings.update { it.copy(theme = mode, grid = false) } }
-                for (color in ColorTheme.entries) {
+                for (color in ColorTheme.entries.filter { it != ColorTheme.DYNAMIC || dynamicColorAvailable() }) {
                     compose.runOnIdle { graph.workspace.panel("설정") }
                     compose.onNodeWithTag("color-theme-${color.name}").performScrollTo().performClick()
                     compose.waitUntil(5_000) { model.settings.value.colorTheme == color }
@@ -106,7 +108,7 @@ class AppearanceSettingsDeviceTest {
                     if (color == ColorTheme.LAVENDER) capture(run, "settings-${mode.name.lowercase()}")
                     compose.runOnIdle { graph.workspace.panel(null) }
                     compose.waitForIdle()
-                    assertSurface("storage-phone", appColors(mode == ThemeMode.DARK, color).surfaceContainerLow)
+                    assertSurface("storage-phone", themeColors(InstrumentationRegistry.getInstrumentation().targetContext, mode == ThemeMode.DARK, color).surfaceContainerLow)
                     capture(run, "home-${color.name.lowercase()}-${mode.name.lowercase()}")
                 }
             }
