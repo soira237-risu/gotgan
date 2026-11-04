@@ -32,13 +32,13 @@ jobs:
     name: emulator API ${{ matrix.api }} (${{ matrix.shard }}/${{ matrix.shards }})
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    # Four emulators in parallel, each running every fourth class.
+    # Two emulators in parallel, each running every other entry of the list.
     strategy:
       fail-fast: false
       matrix:
         api: [34]
-        shard: [0, 1, 2, 3]
-        shards: [4]
+        shard: [0, 1]
+        shards: [2]
     steps:
       # The emulator image, AVD and Gradle cache do not fit next to the runner's preinstalled toolchains.
       - name: Free disk space
@@ -94,9 +94,9 @@ jobs:
       - name: Device tests on emulator
         uses: reactivecircus/android-emulator-runner@v2
         env:
-          TESTS: ${{ inputs.tests || 'all' }}
-          DEVICE_TEST_REPORT_ONLY: '1'
-          DEVICE_TEST_TIMEOUT: '420'
+          TESTS: ${{ inputs.tests }}
+          DEVICE_TEST_REPORT_ONLY: ${{ inputs.report_only && '1' || '0' }}
+          DEVICE_TEST_TIMEOUT: '300'
           DEVICE_TEST_SHARD: ${{ matrix.shard }}/${{ matrix.shards }}
         with:
           api-level: ${{ matrix.api }}

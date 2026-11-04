@@ -241,7 +241,9 @@ private fun ExplorerHeader(state: ExplorerState, model: ExplorerViewModel, heade
                 if (location != null || state.searchOpen) GlassIconButton(if (selecting || state.searchOpen) Symbols.Close else Symbols.ArrowBackIosNew,
                     if (selecting) "선택 해제" else "뒤로", { focus.clearFocus(); onBack() }, Modifier.testTag("navigate-up"), iconSize = if (selecting || state.searchOpen) 22.dp else 18.dp)
                 else Image(painterResource(R.drawable.ic_brand_keepsake), null, Modifier.size(40.dp).clip(MaterialTheme.shapes.small))
-                Column(Modifier.weight(1f).padding(horizontal = 8.dp).graphicsLayer { alpha = collapsed }, horizontalAlignment = Alignment.CenterHorizontally) {
+                // Invisible until the large title scrolls away; until then screen readers would read the title twice.
+                Column(Modifier.weight(1f).padding(horizontal = 8.dp).graphicsLayer { alpha = collapsed }
+                    .then(if (collapsed == 0f) Modifier.clearAndSetSemantics {} else Modifier), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(meta, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
