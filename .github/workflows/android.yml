@@ -1,5 +1,5 @@
-# Unit tests, lint and a debug APK on every push and pull request.
-# Device, NAS and release-signing checks stay local (AGENTS.md, docs/PUBLIC-RELEASE.md).
+# Unit tests, lint, a debug APK and a compiled device-test APK on every push to main and every pull request.
+# Device tests run on an emulator in device-tests.yml; NAS and real-phone checks stay on a phone.
 name: Android CI
 
 on:
@@ -36,6 +36,10 @@ jobs:
       # The project key is never committed, so CI signs with the runner's standard debug key and its APK cannot update an installed app.
       - name: Unit tests, lint, debug APK
         run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --stacktrace
+
+      # Device tests run in device-tests.yml, but a compile error should fail here, in minutes.
+      - name: Device test APK compiles
+        run: ./gradlew :app:assembleDebugAndroidTest --stacktrace
 
       - name: Test and lint reports
         if: always()

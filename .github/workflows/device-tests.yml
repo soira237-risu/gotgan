@@ -1,0 +1,122 @@
+# Device (instrumented) tests on an Android emulator for every push to main and every pull request.
+# The classes CI requires are listed in .github/device-tests/emulator.txt; tests that need a NAS,
+# real hardware or real-phone performance stay for a phone (run.sh works the same against one).
+# Run it by hand from the Actions tab to try other classes, e.g. tests=all with report_only to see
+# which classes currently work on an emulator.
+name: Device tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tests:
+        description: "Classes: empty = emulator.txt, 'all', or comma-separated names (Class or Class#method)"
+        required: false
+        default: ''
+      report_only:
+        description: Report failures without failing the run
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  emulator:
+    name: emulator API ${{ matrix.api }} (${{ matrix.shard }}/${{ matrix.shards }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Two emulators in parallel, each running every other entry of the list.
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [34]
+        shard: [0, 1]
+        shards: [2]
+    steps:
+      # The emulator image, AVD and Gradle cache do not fit next to the runner's preinstalled toolchains.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift && df -h /
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Android SDK packages
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" > /dev/null
+
+      - name: Build app and device tests
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # A booted snapshot saves a cold boot on later runs. ATD images leave out the launcher and
+      # Google apps, which otherwise compete with the app for the runner's CPUs.
+      - name: Emulator image cache
+        id: avd-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-${{ matrix.api }}-aosp_atd-x86_64-pixel_6-c4
+
+      - name: Create emulator snapshot
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: aosp_atd
+          arch: x86_64
+          profile: pixel_6
+          cores: 4
+          ram-size: 4096M
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: false
+          script: echo "Snapshot created"
+
+      - name: Device tests on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          TESTS: ${{ inputs.tests }}
+          DEVICE_TEST_REPORT_ONLY: ${{ inputs.report_only && '1' || '0' }}
+          DEVICE_TEST_TIMEOUT: '300'
+          DEVICE_TEST_SHARD: ${{ matrix.shard }}/${{ matrix.shards }}
+        with:
+          api-level: ${{ matrix.api }}
+          target: aosp_atd
+          arch: x86_64
+          profile: pixel_6
+          cores: 4
+          ram-size: 4096M
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          # Same 411 dp wide screen as a Pixel 6 with fewer pixels: the emulator renders in software.
+          script: |
+            adb shell wm size 720x1600 && adb shell wm density 280
+            .github/device-tests/run.sh "$TESTS"
+
+      - name: Device test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-tests-${{ matrix.api }}-${{ matrix.shard }}
+          path: app/build/device-tests/
+          if-no-files-found: ignore

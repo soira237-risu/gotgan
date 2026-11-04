@@ -60,7 +60,9 @@ class ImageFormatsDeviceTest {
             .memoryCachePolicy(CachePolicy.DISABLED).diskCachePolicy(CachePolicy.DISABLED).build()
         val result = loader.execute(request)
         assertTrue("${file.name}: ${result}", result is SuccessResult)
-        (result as SuccessResult).image.toBitmap()
+        val bitmap = (result as SuccessResult).image.toBitmap()
+        // Loaders may hand out GPU-only bitmaps; reading pixels needs a software copy.
+        if (bitmap.config == Bitmap.Config.HARDWARE) bitmap.copy(Bitmap.Config.ARGB_8888, false) else bitmap
     }
 
     private fun assertHalves(label: String, bitmap: Bitmap) {

@@ -1,0 +1,37 @@
+# Device tests CI requires on the emulator (device-tests.yml). One Class or Class#method per line.
+# A class listed whole passed every test it runs on the emulator; for the others only the methods
+# that pass there are listed. The rest stay for a phone, mostly for these reasons (survey 2026-11-04):
+#  - fixtures passed as arguments (mediaPath, playerMediaDir, nasUrl, talkBack...): Media, PlayerSeek,
+#    PlayerBack, MediaNotification, PlayerOptions, SleepTimerEnd, ExpandedMedia, Viewer/ExpandedFormats...
+#  - real-phone timing or frame capture: UiControls#sheetsSettle..., MaterialMotion#sheetAnimates...,
+#    ScrollFrame, Performance, MockNasPerformance
+#  - gestures and layouts tuned to the phone's screen: CompactNavigation (2 methods), Viewport,
+#    Workspace#twoTabs..., UiRedesign, UiLayoutMatrix, PlaceCard, AppearanceSettings (2), ImageViewer,
+#    KeepsakeVisual, ReceiveAndPick#picker... (needs the system file picker), UiAppearance (its dock
+#    "더보기" button reads as not displayed on the emulator; title and contrast checks pass)
+# Try any of them with the workflow's manual run (tests=Name, report_only) before adding it here.
+
+ExplorerDeviceTest
+ImageFormatsDeviceTest
+M2tsPlaybackDeviceTest
+OpenWithDeviceTest
+OperationsDeviceTest
+PlayerDismissDeviceTest
+
+AppearanceSettingsDeviceTest#largeFontsPortraitLandscapeAndSplitKeepReadableFilesAndTouchTargets
+AppearanceSettingsDeviceTest#selectedAppearanceSurvivesActivityRecreationAndFreshStoreRead
+AppearanceSettingsDeviceTest#settingsOfferNamedColorChoicesAndListDensity
+CompactNavigationDeviceTest#dragAddsAndRemovesWithTwoFingersWithoutOpeningFiles
+CompactNavigationDeviceTest#edgePaintScrollsAndIdlePinchStillChangesDensity
+CompactNavigationDeviceTest#imageAnimatedCloseAndSystemBackRetainListingWithoutReads
+CompactNavigationDeviceTest#listPaintScrollAndHomePreserveOtherPane
+CompactNavigationDeviceTest#selectionModeStartsTwoFingerPaintWithoutAnotherLongPress
+MaterialMotionDeviceTest#backRespondsImmediatelyAndRestoresThe300thFolderWithoutRequery
+MaterialMotionDeviceTest#imageTransitionKeepsSelectionPixelsAndCachedListing
+MaterialMotionDeviceTest#selectionAnimatesPixelsAndKeepsTheRowSizeAndListing
+MaterialMotionDeviceTest#zeroDurationScaleSnapsWithoutIntermediatePixels
+ReceiveAndPickDeviceTest#openWithGotganShowsAnotherAppsFileInTheViewer
+ReceiveAndPickDeviceTest#sharedTextIsReceivedIntoTheInboxAndAwaitsADestination
+UiControlsDeviceTest#settingsHaveSingleNamedChoiceTargetsAndAdjustableValues
+UiControlsDeviceTest#standardMenuGeometrySettlesWithin200ms
+WorkspaceDeviceTest#movePreparationCancelDoesNotModifyFiles
