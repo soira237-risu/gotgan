@@ -35,7 +35,8 @@ class UiAppearanceDeviceTest {
                 var minimum = 1f; var maximum = 0f
                 for (x in 0 until pixels.width step 2) for (y in 0 until pixels.height step 2) { val luminance = pixels[x, y].luminance(); minimum = minOf(minimum, luminance); maximum = maxOf(maximum, luminance) }
                 assertTrue("Title must contrast with its background: theme=$theme font=$scale min=$minimum max=$maximum", maximum - minimum > .5f)
-                compose.onNodeWithContentDescription("폴더 전환").assertIsDisplayed().assertHasClickAction()
+                // The folder switcher moved into the dock; it is read by its location names and offers "폴더 전환 열기".
+                compose.onNodeWithTag("folder-switch").assertIsDisplayed().assertHasClickAction()
                 compose.onNodeWithContentDescription("더보기").assertIsDisplayed().assertHasClickAction()
                 compose.onNodeWithTag("view-grid").performClick()
                 compose.onNodeWithTag("storage-phone").assertIsDisplayed().assertHasClickAction()
