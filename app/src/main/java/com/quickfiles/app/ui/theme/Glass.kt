@@ -3,6 +3,7 @@ package com.quickfiles.app.ui.theme
 import android.os.Build
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -99,9 +100,10 @@ val LocalBackdrop = staticCompositionLocalOf<Backdrop?> { null }
 
 /**
  * Records this content into [backdrop]; it still draws normally.
- * The source is its own layer so it re-records only when its content changes. Without that, a
- * glass sampler invalidated by [Backdrop.frame] re-records the shared parent, which re-runs this
- * draw, bumps the frame again and keeps the window drawing every vsync while nothing moves.
+ * The frame is bumped without observing it, and the source is its own layer so it re-records only
+ * when its content changes. Otherwise this draw invalidates itself, or a glass sampler invalidated
+ * by [Backdrop.frame] re-records the shared parent and re-runs this draw; either way the window
+ * draws on every vsync while nothing moves.
  */
 fun Modifier.backdropSource(backdrop: Backdrop): Modifier =
     onGloballyPositioned { backdrop.origin = it.positionInRoot() }
@@ -109,7 +111,8 @@ fun Modifier.backdropSource(backdrop: Backdrop): Modifier =
         .drawWithContent {
             backdrop.layer.record { this@drawWithContent.drawContent() }
             drawLayer(backdrop.layer)
-            backdrop.frame++
+            // `frame++` reads the state too; read inside this draw, the write would invalidate the draw itself.
+            Snapshot.withoutReadObservation { backdrop.frame++ }
         }
 
 /** Real blur of the recorded backdrop on API 31+; older versions keep the translucent tint only. */
