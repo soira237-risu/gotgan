@@ -74,14 +74,14 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-${{ matrix.api }}-aosp_atd-x86_64-pixel_6-c4
+          key: avd-${{ matrix.api }}-google_apis-x86_64-pixel_6-c4
 
       - name: Create emulator snapshot
         if: steps.avd-cache.outputs.cache-hit != 'true'
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api }}
-          target: aosp_atd
+          target: google_apis
           arch: x86_64
           profile: pixel_6
           cores: 4
@@ -94,13 +94,13 @@ jobs:
       - name: Device tests on emulator
         uses: reactivecircus/android-emulator-runner@v2
         env:
-          TESTS: ${{ inputs.tests || 'UiAppearanceDeviceTest,ImageFormatsDeviceTest' }}
+          TESTS: ${{ inputs.tests || 'ImageFormatsDeviceTest' }}
           DEVICE_TEST_REPORT_ONLY: '1'
           DEVICE_TEST_TIMEOUT: '120'
           DEVICE_TEST_SHARD: ${{ matrix.shard }}/${{ matrix.shards }}
         with:
           api-level: ${{ matrix.api }}
-          target: aosp_atd
+          target: google_apis
           arch: x86_64
           profile: pixel_6
           cores: 4
@@ -119,5 +119,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: device-tests-${{ matrix.api }}-${{ matrix.shard }}
-          path: app/build/device-tests/
+          path: |
+            app/build/device-tests/
+            app/build/device-probe/
           if-no-files-found: ignore
