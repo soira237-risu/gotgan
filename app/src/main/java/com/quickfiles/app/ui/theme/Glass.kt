@@ -9,6 +9,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
@@ -96,9 +97,15 @@ fun rememberBackdrop(fill: Color): Backdrop {
 
 val LocalBackdrop = staticCompositionLocalOf<Backdrop?> { null }
 
-/** Records this content into [backdrop]; it still draws normally. */
+/**
+ * Records this content into [backdrop]; it still draws normally.
+ * The source is its own layer so it re-records only when its content changes. Without that, a
+ * glass sampler invalidated by [Backdrop.frame] re-records the shared parent, which re-runs this
+ * draw, bumps the frame again and keeps the window drawing every vsync while nothing moves.
+ */
 fun Modifier.backdropSource(backdrop: Backdrop): Modifier =
     onGloballyPositioned { backdrop.origin = it.positionInRoot() }
+        .graphicsLayer {}
         .drawWithContent {
             backdrop.layer.record { this@drawWithContent.drawContent() }
             drawLayer(backdrop.layer)

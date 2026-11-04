@@ -94,9 +94,9 @@ jobs:
       - name: Device tests on emulator
         uses: reactivecircus/android-emulator-runner@v2
         env:
-          TESTS: ${{ inputs.tests || 'ImageFormatsDeviceTest' }}
+          TESTS: ${{ inputs.tests || 'UiAppearanceDeviceTest,ExplorerDeviceTest,UiControlsDeviceTest,ImageFormatsDeviceTest' }}
           DEVICE_TEST_REPORT_ONLY: '1'
-          DEVICE_TEST_TIMEOUT: '120'
+          DEVICE_TEST_TIMEOUT: '240'
           DEVICE_TEST_SHARD: ${{ matrix.shard }}/${{ matrix.shards }}
         with:
           api-level: ${{ matrix.api }}
