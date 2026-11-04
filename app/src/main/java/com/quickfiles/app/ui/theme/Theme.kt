@@ -1,10 +1,12 @@
 package com.quickfiles.app.ui.theme
 
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
@@ -72,12 +74,78 @@ private val AppTypography = Typography(
 internal val AppShapes = Shapes(extraSmall = RoundedCornerShape(8.dp), small = RoundedCornerShape(12.dp), medium = RoundedCornerShape(16.dp),
     large = RoundedCornerShape(24.dp), extraLarge = RoundedCornerShape(32.dp))
 
+/**
+ * Roles Material's [ColorScheme] has no slot for. Read them here instead of guessing from a colour's brightness.
+ * [lightPaper] and [darkPaper] are the active palette's own light and dark backgrounds with their ink, for text papers.
+ */
+@Immutable
+data class ThemeExtras(
+    val dark: Boolean,
+    val success: Color, val successContainer: Color, val onSuccessContainer: Color,
+    val lightPaper: Pair<Color, Color>, val darkPaper: Pair<Color, Color>,
+)
+
+internal fun themeExtras(dark: Boolean, light: ColorScheme, darkScheme: ColorScheme) = ThemeExtras(
+    dark = dark,
+    success = Color(if (dark) 0xFF8ECB9C else 0xFF2E6B40),
+    successContainer = Color(if (dark) 0xFF1F3A27 else 0xFFDCEEDF),
+    onSuccessContainer = Color(if (dark) 0xFFA8DAB5 else 0xFF1E5A30),
+    lightPaper = light.background to light.onSurface,
+    darkPaper = darkScheme.background to darkScheme.onSurface,
+)
+
+val LocalThemeExtras = staticCompositionLocalOf { themeExtras(false, keepsakeColors(false), keepsakeColors(true)) }
+
+/** Wallpaper colours on Android 12+, adjusted like the fixed palettes; null where the platform has none. */
+internal fun dynamicColors(context: android.content.Context, dark: Boolean): ColorScheme? =
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) null
+    else (if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)).copy(surfaceTint = Color.Transparent)
+
+internal fun dynamicColorAvailable() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+
+/** The scheme for a palette choice; [ColorTheme.DYNAMIC] falls back to Keepsake where wallpaper colours are unavailable. */
+internal fun themeColors(context: android.content.Context, dark: Boolean, theme: ColorTheme): ColorScheme =
+    (if (theme == ColorTheme.DYNAMIC) dynamicColors(context, dark) else null) ?: appColors(dark, theme)
+
+/**
+ * Holds this window's frames until [ready], for at most [limitMillis]. The first frame then already uses the saved palette
+ * instead of the defaults shown while settings load. Returning false from a pre-draw listener skips that frame only.
+ */
+@Composable
+private fun HoldFramesUntil(ready: Boolean, limitMillis: Long = 600) {
+    val view = LocalView.current
+    val current by rememberUpdatedState(ready)
+    DisposableEffect(view) {
+        val deadline = android.os.SystemClock.uptimeMillis() + limitMillis
+        val observer = view.viewTreeObserver
+        val listener = object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (!current && android.os.SystemClock.uptimeMillis() < deadline) return false
+                view.viewTreeObserver.takeIf { it.isAlive }?.removeOnPreDrawListener(this)
+                return true
+            }
+        }
+        observer.addOnPreDrawListener(listener)
+        onDispose { view.viewTreeObserver.takeIf { it.isAlive }?.removeOnPreDrawListener(listener) }
+    }
+}
+
 @Composable
 fun GotganTheme(darkOverride: Boolean? = null, manageSystemBars: Boolean = true, content: @Composable () -> Unit) {
     val context = LocalContext.current.applicationContext
     val store = remember(context) { SettingsStore(context) }
-    val settings by store.settings.collectAsStateWithLifecycle(ExplorerSettings())
-    val dark = darkOverride ?: when (settings.theme) { ThemeMode.SYSTEM -> isSystemInDarkTheme(); ThemeMode.LIGHT -> false; ThemeMode.DARK -> true }
+    val loaded by store.settings.collectAsStateWithLifecycle<ExplorerSettings?>(null)
+    HoldFramesUntil(loaded != null)
+    val settings = loaded ?: ExplorerSettings()
+    val systemDark = isSystemInDarkTheme()
+    val dark = darkOverride ?: when (settings.theme) { ThemeMode.SYSTEM -> systemDark; ThemeMode.LIGHT -> false; ThemeMode.DARK -> true }
+    val oled = dark && settings.oledBlack
+    // Wallpaper colours change with the configuration, which also recomposes this.
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val colors = remember(dark, oled, settings.colorTheme, configuration) { themeColors(context, dark, settings.colorTheme).let { if (oled) oledColors(it) else it } }
+    val extras = remember(dark, settings.colorTheme, configuration) {
+        themeExtras(dark, themeColors(context, false, settings.colorTheme), themeColors(context, true, settings.colorTheme))
+    }
     val view = LocalView.current
     SideEffect {
         val activity = generateSequence(view.context) { (it as? android.content.ContextWrapper)?.baseContext }
@@ -86,11 +154,11 @@ fun GotganTheme(darkOverride: Boolean? = null, manageSystemBars: Boolean = true,
             androidx.core.view.WindowCompat.getInsetsController(window, view).apply {
                 isAppearanceLightStatusBars = !dark; isAppearanceLightNavigationBars = !dark
             }
+            // The window shows through during resizes and the recents snapshot; match the palette, not the launch theme.
+            window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(colors.background.toArgb()))
         }
     }
-    val oled = dark && settings.oledBlack
-    val colors = remember(dark, oled, settings.colorTheme) { appColors(dark, settings.colorTheme).let { if (oled) oledColors(it) else it } }
     val glass = remember(colors, dark, oled) { if (!dark) lightGlass(colors.surface) else if (oled) MediaGlass.copy(regular = .76f, thick = .9f) else darkGlass(colors.surfaceContainer) }
     MaterialTheme(colorScheme = colors, typography = AppTypography, shapes = AppShapes,
-        content = { CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface, LocalGlass provides glass) { content() } })
+        content = { CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface, LocalGlass provides glass, LocalThemeExtras provides extras) { content() } })
 }

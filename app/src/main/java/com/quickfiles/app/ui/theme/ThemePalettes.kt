@@ -76,13 +76,13 @@ private fun palette(theme: ColorTheme, dark: Boolean): Palette = when (theme) {
         accent = 0xFF343434, onAccent = 0xFFFFFFFF, selection = 0xFFE4E4E4,
         onSelection = 0xFF303030,
     )
-    ColorTheme.TERRACOTTA -> error("Terracotta uses the original Keepsake palette")
+    ColorTheme.TERRACOTTA, ColorTheme.DYNAMIC -> error("Terracotta uses the original Keepsake palette; wallpaper colours come from the platform")
 }
 
-/** App surfaces and controls follow the user's palette; error roles retain their meaning. */
+/** App surfaces and controls follow the user's palette; error roles retain their meaning. [ColorTheme.DYNAMIC] needs a Context, see themeColors; here it falls back to Keepsake. */
 internal fun appColors(dark: Boolean, theme: ColorTheme): ColorScheme {
     val original = keepsakeColors(dark)
-    if (theme == ColorTheme.TERRACOTTA) return original
+    if (theme == ColorTheme.TERRACOTTA || theme == ColorTheme.DYNAMIC) return original
     val p = palette(theme, dark)
     return original.copy(
         primary = Color(p.accent), onPrimary = Color(p.onAccent),

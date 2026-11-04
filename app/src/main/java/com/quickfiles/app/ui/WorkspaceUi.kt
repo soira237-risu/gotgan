@@ -19,7 +19,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -47,6 +46,7 @@ import com.quickfiles.app.playback.PlayerActivity
 import com.quickfiles.app.storage.*
 import com.quickfiles.app.ui.theme.LocalBackdrop
 import com.quickfiles.app.ui.theme.LocalGlass
+import com.quickfiles.app.ui.theme.LocalThemeExtras
 import com.quickfiles.app.ui.theme.backdropBlur
 import com.quickfiles.app.ui.theme.backdropSource
 import com.quickfiles.app.ui.theme.glass
@@ -274,7 +274,7 @@ internal fun FullPanel(title: String, close: () -> Unit, content: @Composable Co
     Dialog(onDismissRequest = ::dismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         // Edge to edge without the dialog dim, so the status bar shows the panel's own background.
         val view = androidx.compose.ui.platform.LocalView.current
-        val light = MaterialTheme.colorScheme.background.luminance() > .5f
+        val light = !LocalThemeExtras.current.dark
         SideEffect {
             (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window?.let { window ->
                 window.setWindowAnimations(0)

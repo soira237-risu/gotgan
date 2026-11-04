@@ -3,7 +3,6 @@ package com.quickfiles.app.ui
 import com.quickfiles.app.ui.icons.Symbols
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -17,19 +16,24 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.quickfiles.app.data.ColorTheme
-import com.quickfiles.app.data.ThemeMode
-import com.quickfiles.app.ui.theme.appColors
+import androidx.compose.ui.platform.LocalContext
+import com.quickfiles.app.ui.theme.LocalThemeExtras
+import com.quickfiles.app.ui.theme.dynamicColorAvailable
+import com.quickfiles.app.ui.theme.themeColors
 
 @Composable
-internal fun ColorThemeChoices(selected: ColorTheme, mode: ThemeMode, choose: (ColorTheme) -> Unit) {
-    val dark = when (mode) { ThemeMode.SYSTEM -> isSystemInDarkTheme(); ThemeMode.LIGHT -> false; ThemeMode.DARK -> true }
+internal fun ColorThemeChoices(selected: ColorTheme, choose: (ColorTheme) -> Unit) {
+    val dark = LocalThemeExtras.current.dark
+    val context = LocalContext.current
+    // Wallpaper colours exist from Android 12; older devices never offer the choice.
+    val themes = ColorTheme.entries.filter { it != ColorTheme.DYNAMIC || dynamicColorAvailable() }
     BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         val columns = if (maxWidth >= 320.dp && LocalDensity.current.fontScale < 1.5f) 2 else 1
         Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            ColorTheme.entries.chunked(columns).forEach { themes ->
+            themes.chunked(columns).forEach { themes ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     themes.forEach { theme ->
-                        val preview = appColors(dark, theme)
+                        val preview = themeColors(context, dark, theme)
                         val active = selected == theme
                         Surface(shape = MaterialTheme.shapes.medium, color = preview.surfaceContainerLow,
                             border = BorderStroke(if (active) 2.dp else 1.dp, if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),

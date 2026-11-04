@@ -282,7 +282,7 @@ private fun AudioStage(title: String, modifier: Modifier = Modifier) {
 private fun PlayerButton(label: String, tag: String, modifier: Modifier = Modifier, enabled: Boolean = true, contentDescription: String? = null, action: () -> Unit) {
     val accessibility = if (contentDescription == null) Modifier else Modifier.semantics { this.contentDescription = contentDescription }
     TextButton(onClick = action, enabled = enabled, modifier = modifier.then(accessibility).heightIn(min = 48.dp).testTag(tag), shape = RoundedCornerShape(12.dp),
-        colors = ButtonDefaults.textButtonColors(contentColor = PlayerApricot, disabledContentColor = Color.Gray)) {
+        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary, disabledContentColor = Color.Gray)) {
         Text(label, maxLines = 1)
     }
 }
