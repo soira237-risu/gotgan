@@ -206,6 +206,16 @@ class PlayerSeekDeviceTest {
         assertFalse(main { graph.playback.controller!!.playWhenReady })
         compose.onNodeWithTag("player-seek-undo").assertDoesNotExist()
         capture("audio-controls")
+        // Music keeps its playback bar: neither the idle timer nor a tap may hide it.
+        main { graph.playback.controller!!.play() }
+        compose.waitUntil(10_000) { graph.playback.state.value.playing }
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(3_500)
+        compose.onNodeWithTag("player-footer").assertIsDisplayed()
+        surface().performTouchInput { click(Offset(width * .5f, height * .4f)) }
+        compose.mainClock.advanceTimeBy(3_500)
+        compose.onNodeWithTag("player-footer").assertIsDisplayed()
+        compose.onNodeWithTag("player-timeline").assertIsDisplayed()
     }
 
     @Test fun activeSleepTimerRemainsAfterSeekingWithoutUndo() {

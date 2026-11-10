@@ -78,8 +78,11 @@ internal fun PlayerScreen(connection: PlaybackConnection, pip: Boolean, activity
     LaunchedEffect(pip, locked, state.error, outputEnabled, detail.seekable) {
         if (pip || locked || state.error != null || !outputEnabled || !detail.seekable) { preview = null; seeking = false }
     }
-    LaunchedEffect(controls, state.playing, menu, exploring, locked, touchTick, seeking, preview) {
-        if (controls && state.playing && menu == null && !exploring && !locked && !seeking && preview == null) { delay(3000); controls = false }
+    // Only video hides its controls: there is a picture to uncover. Music has nothing behind
+    // the controls, so its playback bar stays on screen for as long as the player is open.
+    LaunchedEffect(state.video) { if (!state.video) controls = true }
+    LaunchedEffect(controls, state.playing, state.video, menu, exploring, locked, touchTick, seeking, preview) {
+        if (controls && state.video && state.playing && menu == null && !exploring && !locked && !seeking && preview == null) { delay(3000); controls = false }
     }
     LaunchedEffect(seekHint, touchTick) { if (seekHint.isNotEmpty()) { delay(700); seekHint = "" } }
     DisposableEffect(activity, controls, pip, locked, state.video, landscape) {
@@ -141,7 +144,7 @@ internal fun PlayerScreen(connection: PlaybackConnection, pip: Boolean, activity
                 }, onPreview = { preview = it },
                 onCommit = { commitSeek(it.target, it.mediaId, it.sessionId) },
                 onCancel = { preview = null },
-                onTap = { controls = !controls; touchTick++ }, onDoubleTap = { seek(if (it) 10_000 else -10_000) })
+                onTap = { if (state.video) controls = !controls; touchTick++ }, onDoubleTap = { seek(if (it) 10_000 else -10_000) })
             if (state.error != null) {
                 Column(Modifier.fillMaxSize().safeDrawingPadding().padding(24.dp).background(Color.Black.copy(alpha = .86f), RoundedCornerShape(12.dp))
                     .verticalScroll(rememberScrollState()).padding(16.dp).testTag("player-error-panel"),
