@@ -91,6 +91,17 @@ class PlaybackConnection(private val context: Context) {
             if (detail.seekable) player.seekTo(seekTarget(player.currentPosition, deltaMs, detail.duration))
         }
     }
+    /** Absolute seek for the quick controls; like [seekBy] it never changes playWhenReady. */
+    fun seekTo(positionMs: Long) {
+        controller?.let { player ->
+            val detail = details.value
+            if (detail.seekable) player.seekTo(positionMs.coerceIn(0L, detail.duration.coerceAtLeast(0L)))
+        }
+    }
+    fun previous() { controller?.takeIf { details.value.previous }?.seekToPreviousMediaItem() }
+    fun next() { controller?.takeIf { details.value.next }?.seekToNextMediaItem() }
+    /** Current position of the connected player, or 0 while nothing is connected. */
+    fun position(): Long = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
 
     suspend fun setAudioOnly(enabled: Boolean): Boolean = send(PlaybackCommands.run { if (enabled) audioOnly else showVideo })
     suspend fun setSleepTimerMinutes(minutes: Int): Boolean =
