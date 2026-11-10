@@ -120,7 +120,7 @@ internal fun MiniPlayer(player: PlaybackState, actions: DockActions, modifier: M
 
 @Composable
 private fun PlayerBody(player: PlaybackState, actions: DockActions, modifier: Modifier) {
-    Row(modifier.fillMaxHeight().clip(CircleShape).clickable(onClickLabel = "재생 화면 열기", onClick = actions.player).testTag("mini-player-open"),
+    Row(modifier.fillMaxHeight().clip(CircleShape).clickable(onClickLabel = if (player.video) "재생 화면 열기" else "빠른 재생 제어 열기", onClick = actions.player).testTag("mini-player-open"),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape), contentAlignment = Alignment.Center) {
             Icon(Symbols.MusicNote, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)

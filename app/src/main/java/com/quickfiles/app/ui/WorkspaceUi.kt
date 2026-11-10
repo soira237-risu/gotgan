@@ -127,7 +127,7 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                     val dock = DockModel(names[workspace.active] ?: "저장소", names[1 - workspace.active] ?: "저장소 선택", state.location == null,
                         canSearch = state.location != null && !state.searchOpen)
                     val actions = DockActions(home = { active.home() }, switchPanel = { controller.panel("폴더 전환") }, swap = { controller.activate(1 - workspace.active) },
-                        tasks = { controller.panel("작업 요약") }, search = { active.showSearch(true) }, player = { openPanel("재생 중") },
+                        tasks = { controller.panel("작업 요약") }, search = { active.showSearch(true) }, player = { if (player.video) openPanel("재생 중") else controller.panel("빠른 재생") },
                         toggle = { first.graph.playback.toggle() }, stop = { scope.launch { first.graph.playback.stop() } })
                     val tasks by first.graph.dao.tasks().collectAsStateWithLifecycle(emptyList())
                     val running = tasks.filter { it.state in setOf("RUNNING", "QUEUED", "PREPARING", "PAUSING", "CANCELLING") }
@@ -227,6 +227,9 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                 }
             } }
             "목적지 선택" -> workspace.pending?.let { pending -> DestinationPicker(models[pending.owner], pending.destination, { controller.panel("목적지") }, controller::destination) }
+            // Music opens quick controls from the mini player; video still goes straight to its picture.
+            "빠른 재생" -> QuickPlayerSheet(first.graph.playback, onDismiss = { controller.panel(null) }, onOpenPlayer = { openPanel("재생 중") },
+                onStop = { scope.launch { first.graph.playback.stop() } })
             "작업 요약" -> WorkspaceSheet("작업", onDismissRequest = { controller.panel(null) }) { TaskSummary(active) { controller.panel("작업") } }
             "작업", "휴지통", "설정" -> FullPanel(workspace.panel!!, { controller.panel(null) }) { when (workspace.panel) { "작업" -> TasksPanel(active); "휴지통" -> TrashPanel(active); else -> SettingsPanel(active) } }
             "최근 파일" -> FullPanel("최근 파일", { controller.panel(null) }) { RecentFilesPanel(active) { controller.panel(null) } }
