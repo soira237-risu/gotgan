@@ -242,6 +242,8 @@ class OperationEngine(
         // Native MOVE acknowledgement may be lost. Without a prior fingerprint we never infer success.
         if (sourceEntry == null) {
             if (item?.phase == "SOURCE_TRASHED" || item?.phase == "COMMITTED" && !moving) { dao.item(item.copy(phase = "DONE")); return true }
+            // An in-place merge only ever removes its folder once it is empty, so a missing one means that last step went through.
+            if (item?.phase == "MERGING" && dest.find(decodeLocation(item.destination))?.isDirectory == true) { dao.item(item.copy(phase = "DONE")); return true }
             throw StorageException(StorageError.CONFLICT, "원본이 없어 이전 작업 결과를 확정하지 못했습니다. 대상과 작업 기록을 확인해 주세요.")
         }
         var destination = item?.destination?.let(::decodeLocation) ?: requested
@@ -259,9 +261,25 @@ class OperationEngine(
             dao.item(item)
         }
         val revision = decodeRevision(item.revision)
-        if (!revision.matches(sourceEntry.revision)) throw StorageException(StorageError.CONFLICT, "작업 시작 후 원본이 변경되었습니다.")
+        // A folder being merged in place has already handed some children over, which changes its own timestamp.
+        if (item.phase != "MERGING" && !revision.matches(sourceEntry.revision)) throw StorageException(StorageError.CONFLICT, "작업 시작 후 원본이 변경되었습니다.")
         if (sourceEntry.isDirectory && moving && journalledTrashInside(source)) throw StorageException(StorageError.BUSY, "폴더 안의 기존 휴지통을 복원하거나 비운 뒤 이동해 주세요.")
-        if (moving && source.sourceId == destination.sourceId && item.phase == "PLANNED" && dest.find(destination) == null) {
+        val sameStorage = moving && source.sourceId == destination.sourceId
+        // Within one storage a merge moves each child by name instead of copying and hashing the whole tree.
+        if (sameStorage && sourceEntry.isDirectory && policy == ConflictPolicy.MERGE && item.phase in listOf("PLANNED", "MERGING") &&
+            dest.find(destination)?.isDirectory == true) return mergeInPlace(task, id, item, source, destination, dest, onProgress)
+        // Within one storage a replacement keeps the old file in the trash, then renames the new one into place.
+        if (sameStorage && !sourceEntry.isDirectory && policy == ConflictPolicy.REPLACE && item.phase == "PLANNED") {
+            val conflict = dest.find(destination)
+            if (conflict != null) {
+                if (conflict.isDirectory) throw StorageException(StorageError.CONFLICT, "폴더는 교체할 수 없습니다. 병합 또는 이름 바꾸기를 선택해 주세요.")
+                if (item.targetRevision.isEmpty() || !decodeRevision(item.targetRevision).matches(conflict.revision)) throw StorageException(StorageError.CONFLICT, "작업 시작 후 교체 대상이 변경되었습니다. 기존 파일을 보존했습니다.")
+                val backup = stableId(id, "backup")
+                item = item.copy(backupId = backup); dao.item(item)
+                trash(destination, backup)
+            }
+        }
+        if (sameStorage && item.phase == "PLANNED" && dest.find(destination) == null) {
             item = item.copy(phase = "NATIVE_MOVING")
             dao.item(item)
             dest.move(source, destination, revision)
@@ -307,6 +325,8 @@ class OperationEngine(
                 item = item.copy(phase = "COMMITTED"); dao.item(item)
             } else throw StorageException(StorageError.CONFLICT, "확정 결과가 불확실합니다. 원본과 임시 파일을 보존했습니다.")
         } else {
+            // A stage verified a moment ago in this run is not hashed a second time; a resumed one is.
+            var verifiedNow = false
             if (item.phase != "VERIFIED") {
                 val oldStage = dest.find(stage)
                 var resumeOffset = 0L
@@ -358,8 +378,9 @@ class OperationEngine(
                 dao.task((dao.task(task) ?: error("작업 기록 없음")).copy(message = "SHA-256 내용 검증 중", speed = 0)).also { dao.task(task)?.let(onProgress) }
                 if (digest(dest, stage, null) != sourceHash) throw StorageException(StorageError.CONFLICT, "내용 검증에 실패했습니다. 원본을 보존했습니다.")
                 item = item.copy(phase = "VERIFIED", hash = sourceHash, bytes = sourceEntry.size ?: 0); dao.item(item)
+                verifiedNow = true
             }
-            if (item.hash != digest(dest, stage, null)) throw StorageException(StorageError.CONFLICT, "임시 파일이 변경되었습니다.")
+            if (!verifiedNow && item.hash != digest(dest, stage, null)) throw StorageException(StorageError.CONFLICT, "임시 파일이 변경되었습니다.")
             val conflict = dest.find(destination)
             if (conflict != null) {
                 if (policy != ConflictPolicy.REPLACE || conflict.isDirectory) throw StorageException(StorageError.CONFLICT, "대상이 존재합니다. 덮어쓰지 않았습니다.")
@@ -373,11 +394,34 @@ class OperationEngine(
             item = item.copy(phase = "COMMITTED"); dao.item(item)
         }
         if (moving) {
+            // Hashed once more before anything is prepared, so a changed source leaves no trash container behind.
+            // trash() is not asked to hash it a third time; it still refuses a source whose version moved on.
             if (digest(src, source, revision) != item.hash) throw StorageException(StorageError.CONFLICT, "원본이 변경되었습니다. 원본을 보존했습니다.")
-            trash(source, stableId(id, "source"), revision, item.hash)
+            trash(source, stableId(id, "source"), revision)
             item = item.copy(phase = "SOURCE_TRASHED"); dao.item(item)
         }
         dao.item(item.copy(phase = "DONE")); changed.tryEmit(destination.parent()!!)
+        return true
+    }
+
+    /** Moves each child of [source] into the existing folder [destination] on the same storage, then removes the emptied folder.
+     * A child whose name is taken by a file stays where it was, so nothing is overwritten and the task reports it as skipped. */
+    private suspend fun mergeInPlace(task: String, id: String, planned: TaskItem, source: StorageLocation, destination: StorageLocation,
+                                     w: WritableStorageProvider, onProgress: (FileTask) -> Unit): Boolean {
+        val item = planned.copy(phase = "MERGING")
+        dao.item(item)
+        val children = w.list(source)
+        if (children.any { it.accessError != null }) throw StorageException(StorageError.ACCESS, "읽지 못하는 하위 항목이 있습니다. 원본 폴더를 보존했습니다.")
+        if (children.any { isManagedName(it.name) }) throw StorageException(StorageError.BUSY, "폴더 안의 휴지통 또는 임시 작업을 정리한 뒤 다시 시도해 주세요.")
+        var all = true
+        for (child in children) if (!transfer(task, child.location, destination.child(child.name), ConflictPolicy.MERGE, true, onProgress)) all = false
+        changed.tryEmit(source); changed.tryEmit(destination)
+        if (!all) return false
+        if (w.list(source).isNotEmpty()) throw StorageException(StorageError.CONFLICT, "이동하는 동안 원본 폴더에 새 항목이 생겼습니다. 원본 폴더를 보존했습니다.")
+        // Only an empty folder is removed; where a folder delete would also take new contents with it, it goes to the trash instead.
+        if (w.deletesRecursively) trash(source, stableId(id, "source")) else w.delete(source, w.stat(source).revision)
+        dao.item(item.copy(phase = "DONE"))
+        changed.tryEmit(source.parent()!!)
         return true
     }
 

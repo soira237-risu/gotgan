@@ -49,4 +49,18 @@ class UiStateTest {
         assertEquals(ViewMode.LIST, ExplorerSettings().copy(grid = false).viewMode)
         assertEquals(ThemeMode.SYSTEM, ExplorerSettings().theme)
     }
+    @Test fun folderOnScreenCanBecomeTheDestinationOnlyWhenItMakesSense() {
+        val photos = StorageLocation(LOCAL_SOURCE, "DCIM/photos")
+        val pending = PendingTransfer(0, listOf(photos.child("a.jpg"), photos.child("trip")), move = true, destination = StorageLocation(LOCAL_SOURCE, "Download"))
+        assertTrue(pending.canTarget(StorageLocation(LOCAL_SOURCE, "Pictures")))
+        assertTrue(pending.canTarget(StorageLocation("usb-1", "DCIM/photos/trip")))
+        assertFalse(pending.canTarget(StorageLocation(LOCAL_SOURCE, "Download")))
+        // Where everything already is, a selected folder itself, or anything inside it.
+        assertFalse(pending.canTarget(photos))
+        assertFalse(pending.canTarget(photos.child("trip")))
+        assertFalse(pending.canTarget(photos.child("trip").child("day 1")))
+        // A sibling whose name merely starts the same way is fine.
+        assertTrue(pending.canTarget(photos.child("trip-old")))
+        assertFalse(pending.copy(sources = emptyList()).canTarget(StorageLocation(LOCAL_SOURCE, "Pictures")))
+    }
 }

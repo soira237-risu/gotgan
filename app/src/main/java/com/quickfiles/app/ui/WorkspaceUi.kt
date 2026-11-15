@@ -219,7 +219,7 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                     }
                 }
             }
-            "목적지" -> workspace.pending?.let { pending -> DestinationPanel(pending, models[pending.owner], { controller.panel(null) }, { controller.panel("목적지 선택") }, controller::cancelPreparation, controller::policy) { policy ->
+            "목적지" -> workspace.pending?.let { pending -> DestinationPanel(pending, models[pending.owner], state.location?.takeIf { pending.canTarget(it) }, controller::destination, { controller.panel(null) }, { controller.panel("목적지 선택") }, controller::cancelPreparation, controller::policy) { policy ->
                 if (controller.state.value.pending?.submitting == false) {
                     controller.submitting(true)
                     if (pending.archiveEntries != null) models[pending.owner].enqueue("EXTRACT", pending.sources, pending.destination!!.child(pending.outputFolder), extra = org.json.JSONObject().put("entries", org.json.JSONArray(pending.archiveEntries)), onQueued = { controller.cancelPreparation() }, onFinished = { controller.submitting(false) })
@@ -312,7 +312,7 @@ internal fun FullPanel(title: String, close: () -> Unit, content: @Composable Co
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DestinationPanel(pending: PendingTransfer, model: ExplorerViewModel, collapse: () -> Unit, choose: () -> Unit, cancel: () -> Unit, setPolicy: (ConflictPolicy) -> Unit, execute: (ConflictPolicy) -> Unit) {
+private fun DestinationPanel(pending: PendingTransfer, model: ExplorerViewModel, here: StorageLocation?, useHere: (StorageLocation) -> Unit, collapse: () -> Unit, choose: () -> Unit, cancel: () -> Unit, setPolicy: (ConflictPolicy) -> Unit, execute: (ConflictPolicy) -> Unit) {
     val policy = pending.policy
     var writable by remember(pending.destination) { mutableStateOf(false) }
     var error by remember(pending.destination) { mutableStateOf<String?>(null) }
@@ -321,6 +321,10 @@ private fun DestinationPanel(pending: PendingTransfer, model: ExplorerViewModel,
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(pending.destination?.let { "${model.sourceName(it.sourceId)} / ${it.path}" } ?: "저장소를 선택해 주세요")
             val leaveSheet = LocalSheetDismiss.current
+            // After folding the sheet away and browsing, the folder on screen is one tap away as the destination.
+            if (here != null) Button(shape = MaterialTheme.shapes.small, onClick = { useHere(here) }, enabled = !pending.submitting, modifier = Modifier.fillMaxWidth().testTag("destination-here")) {
+                Text("지금 보는 폴더로: ${here.path.substringAfterLast('/').ifEmpty { model.sourceName(here.sourceId) }}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
             OutlinedButton(shape = MaterialTheme.shapes.small, onClick = { leaveSheet(choose) }, enabled = !pending.submitting) { Text("목적지 변경") }
             if (pending.archiveEntries != null) Text("새 폴더: ${pending.outputFolder}\n기존 파일은 덮어쓰지 않습니다.")
             else Text("같은 이름이 있을 때", style = MaterialTheme.typography.titleMedium)

@@ -167,7 +167,12 @@ internal fun AnimatedAssetImage(asset: Any, model: ExplorerViewModel, modifier: 
                     event.changes.firstOrNull { it.id == first.id }?.let { tracker.addPosition(it.uptimeMillis, it.position) }
                     val delta = event.calculatePan()
                     movement += delta
-                    if (event.changes.count { it.pressed } > 1) multiTouch = true
+                    if (!multiTouch && event.changes.count { it.pressed } > 1) {
+                        multiTouch = true
+                        // A second finger turns a pull-to-close or page swipe into a pinch: undo what the first finger had started.
+                        if (pull > 0f) { pull = 0f; dismissDrag?.invoke(0f) }
+                        vertical = null
+                    }
                     if (!dragging && (movement.getDistance() > viewConfiguration.touchSlop || multiTouch)) dragging = true
                     if (dragging) {
                         val viewport = Size(size.width.toFloat(), size.height.toFloat())
@@ -199,6 +204,8 @@ internal fun AnimatedAssetImage(asset: Any, model: ExplorerViewModel, modifier: 
                         event.changes.forEach { it.consume() }
                     }
                 } while (event.changes.any { it.pressed })
+                // A pinch that ends at (or just above) the fitted size settles exactly on it, centred.
+                if (multiTouch && zoom <= 1.01f && (zoom != 1f || pan != Offset.Zero || swipe != 0f)) transition(1f, Offset.Zero)
                 if (dragging && startedAtFit && !multiTouch) {
                     val velocity = tracker.calculateVelocity()
                     val turn = if (vertical == false) imagePageTurn(movement.x, movement.y, velocity.x, density) else 0

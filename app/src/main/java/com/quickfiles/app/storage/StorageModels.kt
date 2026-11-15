@@ -101,6 +101,8 @@ interface WritableStorageProvider : StorageProvider {
     suspend fun move(source: StorageLocation, destination: StorageLocation, expected: Revision? = null)
     suspend fun copy(source: StorageLocation, destination: StorageLocation, expected: Revision? = null) { throw StorageException(StorageError.UNSUPPORTED, "서버 내부 복사를 지원하지 않습니다.") }
     suspend fun delete(location: StorageLocation, expected: Revision? = null)
+    /** True when [delete] on a folder also removes whatever is inside it (WebDAV). The engine then never deletes folders it emptied itself. */
+    val deletesRecursively: Boolean get() = false
     suspend fun availableBytes(location: StorageLocation): Long? = null
 }
 
