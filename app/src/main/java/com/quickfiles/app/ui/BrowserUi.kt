@@ -551,6 +551,11 @@ private fun EntryCollection(entries: List<FileEntry>, state: ExplorerState, mode
         val currentEntries by rememberUpdatedState(entries)
         DisposableEffect(model) { onDispose { model.flushViewport() } }
         val click: (FileEntry) -> Unit = { if (model.state.value.selected.isNotEmpty()) model.select(it) else model.open(it) }
+        // A long press that starts selecting answers at once with the system's long-press tick.
+        val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+        val selectionStarted: () -> Unit = { haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress) }
+        // The gesture is keyed on the layout alone and reads entries through currentEntries, so a listing that refreshes
+        // under the finger (files arriving from a running move, say) no longer cancels a long press or selection stroke.
         if (grid) {
             val grid = remember { LazyGridState(position, anchor.offsetFor(layout)) }
             LaunchedEffect(grid) {
@@ -581,13 +586,14 @@ private fun EntryCollection(entries: List<FileEntry>, state: ExplorerState, mode
             }
             val scope = rememberCoroutineScope()
             val currentDensity by rememberUpdatedState(settings.density)
-            val gesture = Modifier.selectionGestures(entries to layout,
+            val gesture = Modifier.selectionGestures(layout,
                 hits = { grid.layoutInfo.visibleItemsInfo.mapNotNull { item -> currentEntries.getOrNull(item.index)?.let {
                     SelectionHit(it.id, Rect(item.offset.x.toFloat(), item.offset.y.toFloat(), (item.offset.x + item.size.width).toFloat(), (item.offset.y + item.size.height).toFloat()))
                 } } },
                 selected = { model.state.value.selected },
                 apply = { ids, selecting -> model.paintSelection(ids, selecting, state) },
                 scroll = { grid.scrollBy(it) },
+                started = selectionStarted,
                 pinch = { scale, centroid ->
                     val item = grid.layoutInfo.visibleItemsInfo.firstOrNull { centroid.x >= it.offset.x && centroid.x < it.offset.x + it.size.width && centroid.y >= it.offset.y && centroid.y < it.offset.y + it.size.height }
                     if (item != null) model.viewport(ViewportAnchor(currentEntries.getOrNull(item.index)?.id, item.index, 0, "pinch"))
@@ -613,13 +619,14 @@ private fun EntryCollection(entries: List<FileEntry>, state: ExplorerState, mode
                     }
             }
             val horizontalPadding = with(LocalDensity.current) { 16.dp.toPx() }
-            val gesture = Modifier.selectionGestures(entries to layout,
+            val gesture = Modifier.selectionGestures(layout,
                 hits = { list.layoutInfo.visibleItemsInfo.mapNotNull { item -> currentEntries.getOrNull(item.index)?.let {
                     SelectionHit(it.id, Rect(horizontalPadding, item.offset.toFloat(), list.layoutInfo.viewportSize.width - horizontalPadding, (item.offset + item.size).toFloat()))
                 } } },
                 selected = { model.state.value.selected },
                 apply = { ids, selecting -> model.paintSelection(ids, selecting, state) },
-                scroll = { list.scrollBy(it) })
+                scroll = { list.scrollBy(it) },
+                started = selectionStarted)
             LazyColumn(Modifier.fillMaxSize().then(gesture).testTag("folder-list"), state = list, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = bottomInset)) {
                 // Within one folder, renamed, added or removed entries glide and fade instead of jumping; a new folder or filter recreates the list above.
                 items(entries, key = { it.id }, contentType = { if (it.isDirectory) "folder" else "file" }) { Box(Modifier.animateItem(fadeInSpec = MaterialMotion.effects(), placementSpec = MaterialMotion.spatial(), fadeOutSpec = MaterialMotion.effects())) { FileCell(it, it.id in state.selected, model, false, state.location?.path?.takeIf { _ -> state.searchResults != null }, listDensity = settings.listDensity, selecting = state.selected.isNotEmpty()) { click(it) } } }

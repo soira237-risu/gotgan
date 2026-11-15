@@ -41,6 +41,8 @@ class WebDavProvider(
     client: OkHttpClient = defaultClient,
 ) : WritableStorageProvider {
     override val capabilities = StorageCapabilities(writable = true, serverCopy = true, rangedRead = true)
+    // A WebDAV DELETE on a collection removes its members too.
+    override val deletesRecursively = true
     private val base = validatedUrl(address)
     private val rootSegments = base.pathSegments.dropLastWhile { it.isEmpty() }
     private val authorization = Credentials.basic(username, password, Charsets.UTF_8)

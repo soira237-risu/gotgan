@@ -16,6 +16,11 @@ data class PendingTransfer(val owner: Int, val sources: List<StorageLocation>, v
     val received: Boolean = false) {
     val label get() = if (archiveEntries != null) "압축 해제" else if (received) "저장" else if (move) "이동" else "복사"
     val count get() = archiveEntries?.size ?: sources.size
+    /** Whether [location] could replace the current destination: a different folder that is neither one of the sources nor inside one,
+     * and not the folder every source already sits in. */
+    fun canTarget(location: StorageLocation): Boolean = location != destination && sources.isNotEmpty() &&
+        sources.none { it.sourceId == location.sourceId && (location.path == it.path || location.path.startsWith(it.path + "/")) } &&
+        !sources.all { it.parent() == location }
 }
 data class WorkspaceUiState(val active: Int = 0, val split: Boolean = false, val panel: String? = null, val viewerOwner: Int? = null, val pending: PendingTransfer? = null, val ready: Boolean = false)
 

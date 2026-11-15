@@ -12,7 +12,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
+import androidx.compose.runtime.withFrameNanos
 import kotlin.math.abs
 
 internal data class SelectionHit(val id: String, val bounds: Rect)
@@ -38,6 +38,31 @@ internal class SelectionStroke(val selecting: Boolean) {
     fun visit(ids: Iterable<String>): Set<String> = ids.filter { visited.add(it) }.toSet()
 }
 
+/** What a stroke on a tile becomes once it leaves the waiting state. */
+internal enum class StrokeStart { WAIT, TAP, SCROLL, PAINT, PINCH }
+
+/**
+ * Decides a touch that began on a tile before the long-press time is up. One finger past the touch slop scrolls,
+ * or paints while something is already selected. A second finger means a pinch wherever a pinch is handled,
+ * so zooming never selects files by accident; without a pinch it paints with every finger, as before.
+ */
+internal fun strokeStart(pressed: Int, firstDown: Boolean, travelled: Float, touchSlop: Float, selecting: Boolean, canPinch: Boolean): StrokeStart = when {
+    !firstDown -> StrokeStart.TAP
+    pressed > 1 -> if (canPinch) StrokeStart.PINCH else if (selecting) StrokeStart.PAINT else StrokeStart.SCROLL
+    travelled > touchSlop -> if (selecting) StrokeStart.PAINT else StrokeStart.SCROLL
+    else -> StrokeStart.WAIT
+}
+
+/** Edge auto-scroll speed as a fraction of the maximum: zero outside the band, easing in so the edge itself is fastest. */
+internal fun edgeScrollSpeed(y: Float, height: Float, edge: Float): Float {
+    val depth = when {
+        y < edge -> -((edge - y) / edge).coerceIn(0f, 1f)
+        y > height - edge -> ((y - height + edge) / edge).coerceIn(0f, 1f)
+        else -> 0f
+    }
+    return depth * abs(depth)
+}
+
 /** Selected cells paint after touch slop; blank space and idle gestures still scroll/pinch. */
 internal fun Modifier.selectionGestures(
     key: Any?,
@@ -46,6 +71,8 @@ internal fun Modifier.selectionGestures(
     apply: (Set<String>, Boolean) -> Unit,
     scroll: suspend (Float) -> Unit,
     pinch: ((Float, Offset) -> Unit)? = null,
+    /** Called once when a long press starts a selection stroke, for haptic confirmation. */
+    started: () -> Unit = {},
 ): Modifier = pointerInput(key) {
     coroutineScope {
         val scrollScope = this
@@ -60,35 +87,31 @@ internal fun Modifier.selectionGestures(
                     val next = awaitPointerEvent(PointerEventPass.Initial)
                     event = next
                     val pointer = next.changes.firstOrNull { it.id == first.id }
-                    if (pointer == null || !pointer.pressed) break
-                    if (next.changes.count { it.pressed } != 1 ||
-                        (pointer.position - first.position).getDistance() > viewConfiguration.touchSlop) {
-                        if (selectionMode) paintStart = next
-                        break
-                    }
+                    val start = strokeStart(next.changes.count { it.pressed }, pointer?.pressed == true,
+                        pointer?.let { (it.position - first.position).getDistance() } ?: 0f, viewConfiguration.touchSlop, selectionMode, pinch != null)
+                    if (start == StrokeStart.WAIT) continue
+                    if (start == StrokeStart.PAINT) paintStart = next
+                    break
                 }
                 paintStart == null
             } ?: false
             if (!interrupted && firstHit != null) {
                 val stroke = SelectionStroke(firstHit.id !in selected())
+                if (paintStart == null) started()
                 apply(stroke.visit(listOf(firstHit.id)), stroke.selecting)
                 val pointers = linkedMapOf(first.id to first.position)
                 val edge = 56.dp.toPx()
-                val maxPerSecond = 600.dp.toPx()
+                val maxPerSecond = 1600.dp.toPx()
                 val scrolling = scrollScope.launch {
+                    // Paced by the display's frames, so the list moves once per frame at any refresh rate.
                     var previousFrame = 0L
                     while (isActive) {
-                        delay(16)
-                        val now = System.nanoTime()
+                        val now = withFrameNanos { it }
                         val elapsed = if (previousFrame == 0L) 0f else ((now - previousFrame) / 1_000_000_000f).coerceAtMost(.05f)
                         previousFrame = now
                         val primary = pointers.values.firstOrNull() ?: break
-                        val speed = when {
-                            primary.y < edge -> -((edge - primary.y) / edge).coerceIn(0f, 1f)
-                            primary.y > size.height - edge -> ((primary.y - size.height + edge) / edge).coerceIn(0f, 1f)
-                            else -> 0f
-                        }
-                        if (speed != 0f) {
+                        val speed = edgeScrollSpeed(primary.y, size.height.toFloat(), edge)
+                        if (speed != 0f && elapsed > 0f) {
                             scroll(speed * maxPerSecond * elapsed)
                             val newIds = stroke.visit(hits().filter { hit -> pointers.values.any(hit.bounds::contains) }.map { it.id })
                             if (newIds.isNotEmpty()) apply(newIds, stroke.selecting)
