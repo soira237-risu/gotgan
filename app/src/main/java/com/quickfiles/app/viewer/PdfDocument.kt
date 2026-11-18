@@ -2,35 +2,53 @@ package com.quickfiles.app.viewer
 
 import android.content.*
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.os.*
 import android.os.storage.StorageManager
 import android.system.ErrnoException
 import android.system.OsConstants
+import android.util.LruCache
 import com.quickfiles.app.AppGraph
 import com.quickfiles.app.storage.FileEntry
 import kotlinx.coroutines.*
 import java.io.Closeable
-import java.io.File
 import java.nio.ByteBuffer
 import java.nio.channels.SeekableByteChannel
-import java.util.UUID
 
 class PdfDocument private constructor(private val context: Context, private val connection: ServiceConnection,
     private val service: IPdfService, private val input: ParcelFileDescriptor, private val thread: HandlerThread,
     private val channel: SeekableByteChannel, val pages: Int) : Closeable {
+    /** Recently rendered pages, so scrolling back to a page shows it again without rendering it again. */
+    private val rendered = object : LruCache<Long, Bitmap>(RENDER_CACHE_BYTES) { override fun sizeOf(key: Long, value: Bitmap) = value.byteCount }
+
     suspend fun render(page: Int, width: Int): Bitmap = withContext(Dispatchers.IO) {
-        val file = File(context.cacheDir, "pdf-render-${UUID.randomUUID()}.png")
-        try {
-            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_CREATE or ParcelFileDescriptor.MODE_TRUNCATE or ParcelFileDescriptor.MODE_READ_WRITE).use { output -> service.render(page, width, output) }
-            BitmapFactory.decodeFile(file.path) ?: error("PDF 페이지를 표시하지 못했습니다.")
-        } finally { file.delete() }
+        val key = page.toLong() shl 32 or width.toLong()
+        rendered.get(key)?.let { return@withContext it }
+        val (read, write) = ParcelFileDescriptor.createPipe()
+        val bitmap = coroutineScope {
+            // The service writes into the pipe while this side reads, so neither waits on a full pipe buffer.
+            val pixels = async { ParcelFileDescriptor.AutoCloseInputStream(read).use { readPage(java.io.DataInputStream(it.buffered(256 * 1024))) } }
+            try { write.use { service.render(page, width, it) } } catch (e: Exception) { pixels.cancel(); throw e }
+            pixels.await()
+        }
+        rendered.put(key, bitmap)
+        bitmap
     }
     override fun close() {
+        rendered.evictAll()
         runCatching { service.close() }; runCatching { context.unbindService(connection) }
         runCatching { input.close() }; runCatching { channel.close() }; thread.quitSafely()
     }
     companion object {
+        private val RENDER_CACHE_BYTES = (Runtime.getRuntime().maxMemory() / 8).coerceAtMost(64L * 1024 * 1024).toInt()
+
+        /** Reads one page the isolated service rendered. The service is untrusted, so the size is checked before allocating. */
+        internal fun readPage(input: java.io.DataInputStream): Bitmap {
+            val w = input.readInt(); val h = input.readInt()
+            if (w !in 1..2048 || h !in 1..4096) throw java.io.IOException("PDF 페이지 크기가 올바르지 않습니다.")
+            val bytes = ByteArray(w * h * 4); input.readFully(bytes)
+            return Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply { copyPixelsFromBuffer(ByteBuffer.wrap(bytes)) }
+        }
+
         suspend fun open(context: Context, entry: FileEntry): PdfDocument = withContext(Dispatchers.IO) {
             val graph = AppGraph.get(context)
             val channel = graph.cache.channel(graph.repository.provider(entry.location.sourceId), entry)

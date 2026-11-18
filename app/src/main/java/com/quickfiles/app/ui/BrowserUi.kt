@@ -233,15 +233,16 @@ private fun ExplorerHeader(state: ExplorerState, model: ExplorerViewModel, heade
     val count = remember(state.entries, state.query, state.searchResults, state.kind, state.date, state.size, settings.showHidden) { if (location == null) 0 else model.visibleEntries().size }
     val title = when { selecting -> "${state.selected.size}개 선택"; location == null -> "곳간"; else -> location.path.substringAfterLast('/').ifEmpty { model.sourceName(location.sourceId) } }
     val meta = when { location == null -> "내 파일을 차곡차곡"; selecting -> "${model.sourceName(location.sourceId)} · ${count}개 중"; location.path.isEmpty() -> "항목 ${count}개"; else -> "${model.sourceName(location.sourceId)} · 항목 ${count}개" }
-    val collapsed = headerState.collapsedFraction
+    // Only "collapsed at all" recomposes; the fraction itself is read in graphicsLayer, so scrolling redraws instead of recomposing.
+    val collapsedAtAll by remember(headerState) { derivedStateOf { headerState.collapsedFraction > 0f } }
     Column(Modifier.fillMaxWidth()) {
         Box(Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 12.dp, vertical = 6.dp)) {
-            if (collapsed > 0f) Box(Modifier.matchParentSize().graphicsLayer { alpha = collapsed }.glass(glass))
-            Row(Modifier.fillMaxSize().padding(horizontal = if (collapsed > 0f) 2.dp else 0.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (collapsedAtAll) Box(Modifier.matchParentSize().graphicsLayer { alpha = headerState.collapsedFraction }.glass(glass))
+            Row(Modifier.fillMaxSize().padding(horizontal = if (collapsedAtAll) 2.dp else 0.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (location != null || state.searchOpen) GlassIconButton(if (selecting || state.searchOpen) Symbols.Close else Symbols.ArrowBackIosNew,
                     if (selecting) "선택 해제" else "뒤로", { focus.clearFocus(); onBack() }, Modifier.testTag("navigate-up"), iconSize = if (selecting || state.searchOpen) 22.dp else 18.dp)
                 else Image(painterResource(R.drawable.ic_brand_keepsake), null, Modifier.size(40.dp).clip(MaterialTheme.shapes.small))
-                Column(Modifier.weight(1f).padding(horizontal = 8.dp).graphicsLayer { alpha = collapsed }, horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.weight(1f).padding(horizontal = 8.dp).graphicsLayer { alpha = headerState.collapsedFraction }, horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(meta, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -260,7 +261,7 @@ private fun ExplorerHeader(state: ExplorerState, model: ExplorerViewModel, heade
         // Report the title block's height as the collapse distance, then lay it out shortened by the scroll offset.
         Layout(content = {
             Column(Modifier.fillMaxWidth().onSizeChanged { if (headerState.heightOffsetLimit != -it.height.toFloat()) headerState.heightOffsetLimit = -it.height.toFloat() }
-                .graphicsLayer { alpha = 1f - collapsed }.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                .graphicsLayer { alpha = 1f - headerState.collapsedFraction }.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (state.searchOpen) OutlinedTextField(state.query, model::query, singleLine = true, placeholder = { Text("현재 폴더 검색") }, shape = CircleShape,
                     leadingIcon = { Icon(Symbols.Search, null) },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).focusRequester(searchFocus).testTag("folder-search").semantics { contentDescription = "현재 폴더 검색" })
@@ -711,13 +712,29 @@ private fun MediaThumbnail(entry: FileEntry, model: ExplorerViewModel, modifier:
 internal fun Thumbnail(entry: FileEntry, model: ExplorerViewModel, modifier: Modifier, onImage: ((coil3.Image) -> Unit)? = null) {
     var asset by remember(entry.id, entry.etag, entry.modified) { mutableStateOf<java.io.File?>(null) }
     LaunchedEffect(entry.id, entry.etag, entry.modified) {
-        var lease: ContentCache.Lease? = null
-        try {
-            if (isLocalSource(entry.location.sourceId)) lease = model.graph.cache.full(model.provider(entry.location.sourceId), entry, IMAGE_LIMIT)
-            else model.graph.thumbnailRequests.withPermit { lease = model.graph.cache.full(model.provider(entry.location.sourceId), entry, IMAGE_LIMIT) }
-            asset = lease?.file
-            awaitCancellation()
-        } catch (e: CancellationException) { throw e } catch (_: Exception) { asset = null } finally { lease?.close() }
+        val local = isLocalSource(entry.location.sourceId)
+        if (com.quickfiles.app.storage.FileFormats.extension(entry.name) == "svg") {
+            // Vector files are small and only Coil's SVG decoder reads them, so the tile still draws the file itself.
+            var lease: ContentCache.Lease? = null
+            try {
+                if (local) lease = model.graph.cache.full(model.provider(entry.location.sourceId), entry, IMAGE_LIMIT)
+                else model.graph.thumbnailRequests.withPermit { lease = model.graph.cache.full(model.provider(entry.location.sourceId), entry, IMAGE_LIMIT) }
+                asset = lease?.file
+                awaitCancellation()
+            } catch (e: CancellationException) { throw e } catch (_: Exception) { asset = null } finally { lease?.close() }
+            return@LaunchedEffect
+        }
+        // Photos get a small kept JPEG: the camera's embedded preview when it is sharp enough, otherwise one made from
+        // the original, which a remote tile downloads only once and, on a metered network, only for small files.
+        asset = try {
+            val provider = model.provider(entry.location.sourceId)
+            val make: suspend () -> java.io.File? = {
+                model.graph.mediaThumbnails.image(provider, entry,
+                    fullAllowed = { size -> com.quickfiles.app.storage.MediaThumbnails.fullDownloadAllowed(local, model.graph.unmetered(), size) },
+                    original = { model.graph.cache.full(provider, entry, IMAGE_LIMIT) })
+            }
+            if (local) make() else model.graph.thumbnailRequests.withPermit { make() }
+        } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
     }
     asset?.let { AsyncImage(it, null, imageLoader = model.graph.thumbnailLoader, modifier = modifier, contentScale = ContentScale.Crop,
         onSuccess = onImage?.let { report -> { state -> report(state.result.image) } }) }

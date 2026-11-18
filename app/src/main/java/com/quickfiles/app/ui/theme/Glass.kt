@@ -3,6 +3,7 @@ package com.quickfiles.app.ui.theme
 import android.os.Build
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -102,7 +103,9 @@ fun Modifier.backdropSource(backdrop: Backdrop): Modifier =
         .drawWithContent {
             backdrop.layer.record { this@drawWithContent.drawContent() }
             drawLayer(backdrop.layer)
-            backdrop.frame++
+            // Bump without observing the read: a draw that read [Backdrop.frame] and then changed it would invalidate
+            // itself and redraw the whole source every frame. Only the glass sampling the backdrop should follow it.
+            Snapshot.withoutReadObservation { backdrop.frame++ }
         }
 
 /** Real blur of the recorded backdrop on API 31+; older versions keep the translucent tint only. */

@@ -66,6 +66,7 @@ class PlaybackService : MediaSessionService() {
                 setHandleAudioBecomingNoisy(true)
                 setWakeMode(C.WAKE_MODE_NETWORK)
                 addListener(timerListener)
+                addListener(powerListener)
             }
         PlaybackDiagnostics.attach(player)
 
@@ -77,12 +78,29 @@ class PlaybackService : MediaSessionService() {
             .setCallback(sessionCallback)
             .build()
         publishSessionState()
-        scope.launch {
-            while (isActive) {
-                delay(5_000)
-                val item = player.currentMediaItem ?: continue
-                graph.dao.save(SavedValue("playback:${item.mediaId}", player.currentPosition.toString()))
-            }
+    }
+
+    /**
+     * Saves the resume position every 5 seconds only while something plays, and once when it pauses, instead of
+     * waking every 5 seconds for the life of the service. Holds a Wi-Fi lock only for files on a server.
+     */
+    private var positionSaver: Job? = null
+    private fun savePosition() {
+        val item = player.currentMediaItem ?: return
+        val position = player.currentPosition
+        scope.launch { graph.dao.save(SavedValue("playback:${item.mediaId}", position.toString())) }
+    }
+    private val powerListener = object : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            positionSaver?.cancel(); positionSaver = null
+            if (isPlaying) positionSaver = scope.launch { while (isActive) { delay(5_000); savePosition() } }
+            else savePosition()
+        }
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            val remote = mediaItem?.localConfiguration?.uri?.let { uri ->
+                runCatching { StorageDataSource.decodeMediaUri(uri).sourceId }.getOrNull()
+            }?.let { !com.quickfiles.app.storage.isLocalSource(it) && it != com.quickfiles.app.storage.INBOX_SOURCE } ?: true
+            player.setWakeMode(if (remote) C.WAKE_MODE_NETWORK else C.WAKE_MODE_LOCAL)
         }
     }
 
@@ -330,6 +348,7 @@ class PlaybackService : MediaSessionService() {
         scope.cancel()
         if (::player.isInitialized) {
             player.removeListener(timerListener)
+            player.removeListener(powerListener)
             PlaybackDiagnostics.detach(player)
             player.release()
         }

@@ -26,9 +26,13 @@ object TransferScheduler {
             WorkManager.getInstance(context).enqueueUniqueWork("file-operations", ExistingWorkPolicy.APPEND_OR_REPLACE, OneTimeWorkRequestBuilder<TransferWorker>().build())
         }
     }
+    @Volatile private var channelReady = false
     fun notification(context: Context, task: FileTask? = null): Notification {
-        val manager = context.getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel(CHANNEL, "파일 전송", NotificationManager.IMPORTANCE_LOW))
+        // Registering the channel is a binder call; the notification is rebuilt every 500 ms during a transfer.
+        if (!channelReady) {
+            context.getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL, "파일 전송", NotificationManager.IMPORTANCE_LOW))
+            channelReady = true
+        }
         val open = PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val builder = NotificationCompat.Builder(context, CHANNEL).setSmallIcon(android.R.drawable.stat_sys_upload)
             .setContentTitle("곳간 · ${task?.message ?: "파일 작업 준비"}")

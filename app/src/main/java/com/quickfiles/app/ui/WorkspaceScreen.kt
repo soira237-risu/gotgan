@@ -58,7 +58,8 @@ internal fun taskKindIcon(kind: String) = when (kind) {
 /** Compact sheet from the dock's progress ring: active work first, then the latest finished items. */
 @Composable
 internal fun TaskSummary(model: ExplorerViewModel, openAll: () -> Unit) {
-    val tasks by model.graph.dao.tasks().collectAsStateWithLifecycle(emptyList())
+    // Room makes a new Flow per call; remembering it keeps a recomposition from restarting the query.
+    val tasks by remember(model) { model.graph.dao.tasks() }.collectAsStateWithLifecycle(emptyList())
     val active = tasks.filter { taskTone(it.state) == StatusTone.ACTIVE }
     val recent = tasks.filter { taskTone(it.state) != StatusTone.ACTIVE }.take(3)
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -89,7 +90,8 @@ internal fun TaskSummary(model: ExplorerViewModel, openAll: () -> Unit) {
 
 @Composable
 internal fun TasksPanel(model: ExplorerViewModel) {
-    val tasks by model.graph.dao.tasks().collectAsStateWithLifecycle(emptyList())
+    // Room makes a new Flow per call; remembering it keeps a recomposition from restarting the query.
+    val tasks by remember(model) { model.graph.dao.tasks() }.collectAsStateWithLifecycle(emptyList())
     val scope = rememberCoroutineScope(); val context = LocalContext.current
     var savingAs by remember { mutableStateOf<FileTask?>(null) }
     var saveName by remember { mutableStateOf("") }
@@ -153,7 +155,7 @@ internal fun TasksPanel(model: ExplorerViewModel) {
 
 @Composable
 internal fun TrashPanel(model: ExplorerViewModel) {
-    val records by model.graph.dao.trashItems().collectAsStateWithLifecycle(emptyList())
+    val records by remember(model) { model.graph.dao.trashItems() }.collectAsStateWithLifecycle(emptyList())
     val items = records.filter { it.state != "RESTORED" }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var purge by remember { mutableStateOf<List<String>?>(null) }

@@ -289,7 +289,7 @@ class OperationEngine(
             val after = src.list(source)
             if (after.size != snapshot.size || after.any { snapshot[it.name]?.matches(it.revision) != true }) throw StorageException(StorageError.CONFLICT, "원본 폴더 내용이 변경되었습니다. 원본을 보존했습니다.")
             if (moving && all) {
-                verifyCopiedTree(task, source, destination)
+                verifyCopiedTree(task, source, destination, dao.items(task).filter { it.stage.isNotEmpty() })
                 trash(source, stableId(id, "source"), revision)
             }
             if (all) dao.item(item.copy(phase = "DONE"))
@@ -307,7 +307,9 @@ class OperationEngine(
                 item = item.copy(phase = "COMMITTED"); dao.item(item)
             } else throw StorageException(StorageError.CONFLICT, "확정 결과가 불확실합니다. 원본과 임시 파일을 보존했습니다.")
         } else {
-            if (item.phase != "VERIFIED") {
+            // A stage verified by this run was just read back in full; only a stage verified by an earlier run needs reading again.
+            val verifiedNow = item.phase != "VERIFIED"
+            if (verifiedNow) {
                 val oldStage = dest.find(stage)
                 var resumeOffset = 0L
                 val hash = MessageDigest.getInstance("SHA-256")
@@ -359,7 +361,7 @@ class OperationEngine(
                 if (digest(dest, stage, null) != sourceHash) throw StorageException(StorageError.CONFLICT, "내용 검증에 실패했습니다. 원본을 보존했습니다.")
                 item = item.copy(phase = "VERIFIED", hash = sourceHash, bytes = sourceEntry.size ?: 0); dao.item(item)
             }
-            if (item.hash != digest(dest, stage, null)) throw StorageException(StorageError.CONFLICT, "임시 파일이 변경되었습니다.")
+            if (!verifiedNow && item.hash != digest(dest, stage, null)) throw StorageException(StorageError.CONFLICT, "임시 파일이 변경되었습니다.")
             val conflict = dest.find(destination)
             if (conflict != null) {
                 if (policy != ConflictPolicy.REPLACE || conflict.isDirectory) throw StorageException(StorageError.CONFLICT, "대상이 존재합니다. 덮어쓰지 않았습니다.")
@@ -373,7 +375,7 @@ class OperationEngine(
             item = item.copy(phase = "COMMITTED"); dao.item(item)
         }
         if (moving) {
-            if (digest(src, source, revision) != item.hash) throw StorageException(StorageError.CONFLICT, "원본이 변경되었습니다. 원본을 보존했습니다.")
+            // trash() hashes the source against item.hash right before moving it, so the source is read once here, not twice.
             trash(source, stableId(id, "source"), revision, item.hash)
             item = item.copy(phase = "SOURCE_TRASHED"); dao.item(item)
         }
@@ -421,17 +423,21 @@ class OperationEngine(
         it.state != "RESTORED" && it.source == location.sourceId && it.directory.startsWith(location.path + "/")
     }
 
-    private suspend fun verifyCopiedTree(task: String, source: StorageLocation, destination: StorageLocation) {
+    private suspend fun verifyCopiedTree(task: String, source: StorageLocation, destination: StorageLocation, staged: List<TaskItem>) =
+        verifyCopiedTree(task, source, destination, staged.associateBy { it.id }, staged.groupingBy { decodeLocation(it.source).parent() }.eachCount())
+
+    /** The task's staged items are loaded and grouped once for the whole tree, not queried again for every folder. */
+    private suspend fun verifyCopiedTree(task: String, source: StorageLocation, destination: StorageLocation, items: Map<String, TaskItem>, plannedPerFolder: Map<StorageLocation?, Int>) {
         val p = provider(source.sourceId)
         val children = p.list(source)
-        val plannedChildren = dao.items(task).filter { it.stage.isNotEmpty() && decodeLocation(it.source).parent() == source }
-        if (children.size != plannedChildren.size || children.any { it.accessError != null }) throw StorageException(StorageError.CONFLICT, "원본 폴더 구성이 변경되었습니다. 원본을 보존했습니다.")
+        val plannedChildren = plannedPerFolder[source] ?: 0
+        if (children.size != plannedChildren || children.any { it.accessError != null }) throw StorageException(StorageError.CONFLICT, "원본 폴더 구성이 변경되었습니다. 원본을 보존했습니다.")
         for (entry in children) {
-            val planned = dao.item(stableId(task, entry.location.encode() + destination.child(entry.name).encode()))
+            val planned = items[stableId(task, entry.location.encode() + destination.child(entry.name).encode())]
                 ?: throw StorageException(StorageError.CONFLICT, "원본 폴더에 새 항목이 있습니다. 원본을 보존했습니다.")
             if (planned.phase != "DONE" || !decodeRevision(planned.revision).matches(entry.revision)) throw StorageException(StorageError.CONFLICT, "하위 항목이 변경되었습니다. 원본 폴더를 보존했습니다.")
             val target = decodeLocation(planned.destination)
-            if (entry.isDirectory) verifyCopiedTree(task, entry.location, target)
+            if (entry.isDirectory) verifyCopiedTree(task, entry.location, target, items, plannedPerFolder)
             else if (planned.phase != "DONE" || planned.hash.isEmpty() || !decodeRevision(planned.revision).matches(entry.revision) || digest(p, entry.location, entry.revision) != planned.hash || digest(provider(target.sourceId), target, null) != planned.hash) throw StorageException(StorageError.CONFLICT, "하위 파일 내용이 변경되었습니다. 원본 폴더를 보존했습니다.")
         }
         val after = p.list(source)
