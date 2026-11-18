@@ -26,6 +26,27 @@ class InboxTest {
         assertTrue(runCatching { requireFileName(Inbox.sanitizeName("a/b\u0001c", "x")) }.isSuccess)
     }
 
+    @Test fun sendersCannotPointGotganAtItsOwnFiles() {
+        val owners = mapOf("com.quickfiles.app.files" to "com.quickfiles.app", "media" to "com.android.providers.media.module")
+        fun check(scheme: String?, authority: String?) = runCatching {
+            Inbox.checkSender(scheme, authority, "com.quickfiles.app") { owners[it] }
+        }.exceptionOrNull()
+        // Other apps' content URIs are received as before.
+        assertNull(check("content", "media"))
+        assertNull(check("content", "com.example.share"))
+        assertNull(check("CONTENT", "com.example.share"))
+        // file:// would be read with Gotgan's own permissions (its database, settings, cached NAS files).
+        listOf("file" to "", "file" to null, null to null, "android.resource" to "com.quickfiles.app", "content" to "", "content" to null).forEach { (scheme, authority) ->
+            assertEquals("$scheme://$authority", StorageError.ACCESS, (check(scheme, authority) as StorageException).kind)
+        }
+        // Gotgan's own providers, also with the userId@ prefix the resolver strips, and ones that resolve to nobody.
+        listOf("com.quickfiles.app.files", "0@com.quickfiles.app.files", "10@com.quickfiles.app.files", "com.quickfiles.app.androidx-startup", "com.quickfiles.app").forEach {
+            assertEquals(it, StorageError.ACCESS, (check("content", it) as StorageException).kind)
+        }
+        // A look-alike authority owned by another app is not Gotgan's.
+        assertNull(check("content", "com.quickfiles.appx.files"))
+    }
+
     @Test fun missingExtensionsComeFromTheMimeTypeAndDuplicatesGetNumbers() {
         assertEquals("IMG_1.jpg", Inbox.withExtension("IMG_1", "jpg"))
         assertEquals("a.png", Inbox.withExtension("a.png", "jpg"))

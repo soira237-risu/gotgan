@@ -26,13 +26,19 @@ sealed interface Incoming {
  * [attach] records the task, and [cleanup] removes batches whose task completed, batches nobody claimed
  * for a day, and unclaimed batches left over from before the current process started.
  */
-class Inbox(root: File) {
+class Inbox(
+    root: File,
+    /** Package that owns a provider authority, or null when none resolves. Used to refuse Gotgan's own providers. */
+    private val authorityOwner: (String) -> String? = { null },
+    private val ownPackage: String? = null,
+) {
     val root: File = root.canonicalFile
     val provider = InboxProvider(this.root)
 
     /** Copies [items] into a new batch and returns their locations, in order. Partial batches are removed on failure. */
     suspend fun receive(resolver: ContentResolver, items: List<Incoming>, progress: (Long, Long?) -> Unit = { _, _ -> }): List<StorageLocation> = withContext(Dispatchers.IO) {
         require(items.isNotEmpty())
+        items.forEach { if (it is Incoming.Content) checkSender(it.uri.scheme, it.uri.authority, ownPackage, authorityOwner) }
         val batch = UUID.randomUUID().toString()
         val folder = File(root, batch)
         if (!folder.mkdirs()) throw StorageException(StorageError.READ, "받은 파일을 보관할 공간을 만들지 못했습니다.")
@@ -111,7 +117,6 @@ class Inbox(root: File) {
                     }
                 }
             }
-            if (name == null && item.uri.scheme == ContentResolver.SCHEME_FILE) name = item.uri.lastPathSegment
             val extension = MimeTypes.extensionFor(runCatching { resolver.getType(item.uri) }.getOrNull())
             withExtension(sanitizeName(name, "받은 파일 ${index + 1}"), extension) to size
         }
@@ -122,6 +127,21 @@ class Inbox(root: File) {
         private const val UNCLAIMED_MS = 24L * 60 * 60 * 1000
         private const val KEEP_FAILED_MS = 7L * 24 * 60 * 60 * 1000
         private val BATCH = Regex("[0-9a-f-]{36}")
+
+        /**
+         * Gotgan reads what it receives with its own permissions, so a sender could otherwise name files only Gotgan
+         * can read (its database, connection settings, cached remote files) and have them copied to shared storage.
+         * Only content URIs are accepted, and never ones served by Gotgan's own providers. The authority may carry
+         * a "userId@" prefix that the resolver strips, so the check strips it too.
+         */
+        fun checkSender(scheme: String?, authority: String?, ownPackage: String?, authorityOwner: (String) -> String?) {
+            if (!scheme.equals("content", ignoreCase = true) || authority.isNullOrBlank())
+                throw StorageException(StorageError.ACCESS, "보낸 앱이 파일을 안전한 방식(content)으로 보내지 않아 받을 수 없습니다.")
+            val bare = authority.substringAfterLast('@')
+            val owner = runCatching { authorityOwner(bare) }.getOrNull()
+            val own = ownPackage != null && (owner == ownPackage || bare == ownPackage || bare.startsWith("$ownPackage."))
+            if (own) throw StorageException(StorageError.ACCESS, "곳간 안의 파일은 받을 수 없습니다. 탐색기에서 복사해 주세요.")
+        }
 
         /** A name other apps chose is untrusted: strip path parts and control characters, keep it a valid file name. */
         fun sanitizeName(name: String?, fallback: String): String {

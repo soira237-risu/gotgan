@@ -66,7 +66,7 @@ fun sortedEntries(entries: List<FileEntry>, spec: SortSpec): List<FileEntry> {
 
 enum class StorageError { ACCESS, AUTH, TLS, NOT_FOUND, NETWORK, UNSUPPORTED, TOO_LARGE, INVALID_RESPONSE, READ, CONFLICT, NO_SPACE, BUSY }
 
-class StorageException(val kind: StorageError, message: String, cause: Throwable? = null) : IOException(message, cause)
+open class StorageException(val kind: StorageError, message: String, cause: Throwable? = null) : IOException(message, cause)
 
 class ReadHandle(val stream: InputStream, val length: Long?, private val cleanup: () -> Unit = {}) : Closeable {
     override fun close() { try { stream.close() } finally { cleanup() } }

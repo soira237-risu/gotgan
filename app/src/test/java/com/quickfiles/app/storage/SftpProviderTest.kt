@@ -23,16 +23,31 @@ class SftpProviderTest {
         override suspend fun trust(host: String, key: String) { keys.putIfAbsent(host, key) }
     }
 
+    /** Every password a test server was sent, so tests can check that an unverified server never gets one. */
+    private val passwordsSent = mutableListOf<String>()
+
     private fun server(root: File, keyFile: File, port: Int = 0): SshServer = SshServer.setUpDefaultServer().apply {
         this.port = port; host = "127.0.0.1"
         keyPairProvider = SimpleGeneratorHostKeyProvider(keyFile.toPath()).apply { algorithm = "EC" }
-        setPasswordAuthenticator { user, password, _ -> user == "dj" && password == "secret" }
+        setPasswordAuthenticator { user, password, _ -> synchronized(passwordsSent) { passwordsSent += password }; user == "dj" && password == "secret" }
         fileSystemFactory = VirtualFileSystemFactory(root.toPath())
         subsystemFactories = listOf(SftpSubsystemFactory())
         start()
     }.also { servers += it }
 
     @After fun stop() { servers.forEach { it.stop(true) } }
+
+    /** First connection: stops before signing in, and the user accepts the key it reports. */
+    private fun firstConnect(sftp: SftpProvider, keys: MemoryKeys, sourceId: String = "nas"): UnverifiedHostKeyException = runBlocking {
+        val sent = synchronized(passwordsSent) { passwordsSent.size }
+        val unverified = runCatching { sftp.list(StorageLocation(sourceId)) }.exceptionOrNull() as UnverifiedHostKeyException
+        assertEquals(StorageError.TLS, unverified.kind)
+        assertTrue(unverified.fingerprint.startsWith("SHA256:"))
+        assertTrue("an unknown server key must not be trusted on its own", keys.keys.isEmpty())
+        assertEquals("no password may reach a server whose key is unverified", sent, synchronized(passwordsSent) { passwordsSent.size })
+        keys.trust(unverified.host, unverified.key)
+        unverified
+    }
 
     @Test fun browsesReadsAndWritesLikeTheOtherProviders() = runBlocking {
         val root = temp.newFolder("srv"); File(root, "Music").mkdirs()
@@ -41,8 +56,10 @@ class SftpProviderTest {
         val keys = MemoryKeys()
         val sftp = SftpProvider("nas", "sftp://127.0.0.1:${server.port}/", "dj", "secret", keys)
         try {
+            val accepted = firstConnect(sftp, keys)
+            assertEquals("[127.0.0.1]:${server.port}", accepted.host)
             assertEquals(listOf("Music"), sftp.list(StorageLocation("nas")).map { it.name })
-            assertEquals(1, keys.keys.size); assertNotNull(sftp.newlyTrustedKey)
+            assertEquals(1, keys.keys.size)
             val song = sftp.list(StorageLocation("nas", "Music")).single()
             assertEquals("song*?.mp3", song.name); assertEquals(5000L, song.size)
             assertNotNull("SFTP revisions must allow verified edits", song.revision.strongEtag)
@@ -82,6 +99,7 @@ class SftpProviderTest {
         val first = server(root, File(temp.root, "a.key"))
         val keys = MemoryKeys()
         val wrong = SftpProvider("nas", "sftp://127.0.0.1:${first.port}/", "dj", "nope", keys)
+        firstConnect(wrong, keys)
         assertEquals(StorageError.AUTH, (runCatching { wrong.list(StorageLocation("nas")) }.exceptionOrNull() as StorageException).kind)
         wrong.close()
         SftpProvider("nas", "sftp://127.0.0.1:${first.port}/", "dj", "secret", keys).apply { list(StorageLocation("nas")); close() }
@@ -90,9 +108,12 @@ class SftpProviderTest {
         // Same address, different key: an impostor must not get the password.
         server(root, File(temp.root, "b.key"), port)
         val again = SftpProvider("nas", "sftp://127.0.0.1:$port/", "dj", "secret", keys)
+        val sent = synchronized(passwordsSent) { passwordsSent.size }
         val refused = runCatching { again.list(StorageLocation("nas")) }.exceptionOrNull() as StorageException
         assertEquals(StorageError.TLS, refused.kind)
+        assertFalse("a changed key is refused, not offered for trust again", refused is UnverifiedHostKeyException)
         assertTrue(refused.message!!.contains("SHA256:"))
+        assertEquals(sent, synchronized(passwordsSent) { passwordsSent.size })
         again.close()
     }
 

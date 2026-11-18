@@ -8,7 +8,11 @@ class StorageRepository(context: Context, private val additionalProvider: (suspe
     val connections = ConnectionStore(context.applicationContext)
     val local = LocalStorageProvider(Environment.getExternalStorageDirectory()) { Environment.isExternalStorageManager() }
     val volumes = RemovableVolumes(context)
-    val inbox = Inbox(java.io.File(context.applicationContext.filesDir, "inbox"))
+    val inbox = Inbox(
+        java.io.File(context.applicationContext.filesDir, "inbox"),
+        authorityOwner = { context.applicationContext.packageManager.resolveContentProvider(it, 0)?.packageName },
+        ownPackage = context.applicationContext.packageName,
+    )
     suspend fun provider(id: String): StorageProvider {
         additionalProvider?.invoke(id)?.let { return it }
         if (id == LOCAL_SOURCE) return local
