@@ -129,8 +129,8 @@ fun WorkspaceScreen(first: ExplorerViewModel, second: ExplorerViewModel, hasPerm
                     val actions = DockActions(home = { active.home() }, switchPanel = { controller.panel("폴더 전환") }, swap = { controller.activate(1 - workspace.active) },
                         tasks = { controller.panel("작업 요약") }, search = { active.showSearch(true) }, player = { openPanel("재생 중") },
                         toggle = { first.graph.playback.toggle() }, stop = { scope.launch { first.graph.playback.stop() } })
-                    val tasks by first.graph.dao.tasks().collectAsStateWithLifecycle(emptyList())
-                    val running = tasks.filter { it.state in setOf("RUNNING", "QUEUED", "PREPARING", "PAUSING", "CANCELLING") }
+                    // Remembered so recomposition keeps one query; it reads only the running tasks' progress, not every payload.
+                    val running by remember(first) { first.graph.dao.activeProgress() }.collectAsStateWithLifecycle(emptyList())
                     val total = running.sumOf { it.totalBytes.coerceAtLeast(0) }
                     val progress = if (running.isEmpty()) null else if (total > 0) running.sumOf { it.bytes }.toFloat() / total else 0f
                     // The dock keeps its place and changes shape: the area eases to the new size while the controls cross-fade.

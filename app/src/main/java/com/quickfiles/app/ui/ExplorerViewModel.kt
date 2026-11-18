@@ -88,6 +88,9 @@ data class ExplorerState(
 
 private data class FolderSnapshot(val entries: List<FileEntry>, val sort: SortOrder, val index: Int, val offset: Int, val direction: SortDirection, val anchor: ViewportAnchor)
 
+/** How often a running recursive search shows what it has found so far. */
+private const val SEARCH_PUBLISH_MS = 250L
+
 class ExplorerViewModel(application: Application, private val saved: SavedStateHandle, val tabId: String = "A") : AndroidViewModel(application) {
     /** Image tiles now on screen, so the viewer can grow from the tapped one and fly back into the current one. */
     internal val tiles = mutableMapOf<String, TileRef>()
@@ -430,11 +433,17 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                 imageLease = lease
                 val document = if (entry.isText) TextDocument.read(source, entry) else null
                 val text = document?.let { TextPreview(it.bytes, !it.complete) }
-                val pdf = if (entry.isPdf) PdfDocument.open(getApplication(), entry) else null
-                val archive = if (entry.isArchive) ArchiveDocument.open(graph.cache.channel(source, entry), ArchiveFormat.detect(entry.name) ?: ArchiveFormat.Zip) else null
-                val decoded = withContext(Dispatchers.Default) { document?.decode().orEmpty() }
-                if (generation == viewGeneration) mutableState.update { it.copy(preview = it.preview?.copy(loading = false, asset = lease?.file, text = text, document = document, decodedText = decoded, pdf = pdf, archive = archive)) }
-                else { pdf?.close(); archive?.close() }
+                // Opened handles are closed on every way out (another file, back, cancellation, a decode error) unless the preview took them.
+                var pdf: PdfDocument? = null; var archive: ArchiveDocument? = null; var handedOver = false
+                try {
+                    pdf = if (entry.isPdf) PdfDocument.open(getApplication(), entry) else null
+                    archive = if (entry.isArchive) ArchiveDocument.open(graph.cache.channel(source, entry), ArchiveFormat.detect(entry.name) ?: ArchiveFormat.Zip) else null
+                    val decoded = withContext(Dispatchers.Default) { document?.decode().orEmpty() }
+                    if (generation == viewGeneration) {
+                        mutableState.update { it.copy(preview = it.preview?.copy(loading = false, asset = lease?.file, text = text, document = document, decodedText = decoded, pdf = pdf, archive = archive)) }
+                        handedOver = true
+                    }
+                } finally { if (!handedOver) { runCatching { pdf?.close() }; runCatching { archive?.close() } } }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { DiagnosticLog.record("PREVIEW", "read", e); if (generation == viewGeneration) mutableState.update { it.copy(preview = it.preview?.copy(loading = false, error = readableError(e))) } }
         }
@@ -570,6 +579,9 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             try {
                 val source = provider(root.sourceId); val queue = ArrayDeque<StorageLocation>(); queue.add(root)
                 val found = mutableListOf<FileEntry>()
+                // Results are sorted and shown at most every SEARCH_PUBLISH_MS and once at the end, not after every folder:
+                // each publish sorts everything found so far and recomposes the list.
+                var published = 0; var lastPublish = 0L
                 while (queue.isNotEmpty()) {
                     ensureActive()
                     val entries = source.list(queue.removeFirst()).filterNot { OperationEngine.isManagedName(it.name) }
@@ -578,7 +590,12 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                         if (entry.isDirectory && (settings.value.showHidden || !entry.name.startsWith('.'))) queue.add(entry.location)
                     }
                     ensureActive()
-                    if (generation == searchGeneration) mutableState.update { it.copy(searchResults = sortedEntries(found.toList(), SortSpec(it.sort, it.direction))) }
+                    val now = System.nanoTime()
+                    if (found.size != published && (queue.isEmpty() || now - lastPublish >= SEARCH_PUBLISH_MS * 1_000_000)) {
+                        published = found.size; lastPublish = now
+                        val snapshot = found.toList()
+                        if (generation == searchGeneration) mutableState.update { it.copy(searchResults = sortedEntries(snapshot, SortSpec(it.sort, it.direction))) }
+                    }
                 }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { if (generation == searchGeneration) notice("일부 폴더를 검색하지 못했습니다. ${readableError(e)}") }
@@ -648,7 +665,10 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         catch (e: java.nio.charset.CharacterCodingException) { notice("현재 인코딩으로 저장할 수 없는 문자가 있습니다. UTF-8 저장을 선택해 주세요.") }
         catch (e: Exception) { notice(e.message ?: "저장할 수 없습니다.") } }
     }
-    fun draft(value: String?) { mutableState.update { it.copy(preview = it.preview?.copy(draft = value)) } }
+    /** Keeps the editor's unsaved text with the preview of [entryId]; a late push for a file no longer shown is dropped. */
+    fun draft(value: String?, entryId: String) {
+        mutableState.update { state -> state.preview?.takeIf { it.entry.id == entryId && it.draft !== value }?.let { state.copy(preview = it.copy(draft = value)) } ?: state }
+    }
     fun archiveSelection(value: Set<String>) { mutableState.update { it.copy(preview = it.preview?.copy(archiveSelected = value)) } }
     fun archivePage(value: String?) { mutableState.update { it.copy(preview = it.preview?.copy(archiveCurrent = value)) } }
     suspend fun textUnchanged(): Boolean {
@@ -757,9 +777,15 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                 val context = getApplication<Application>()
                 val uris = ArrayList<android.net.Uri>()
                 var done = 0L
+                var lastProgress = 0L
                 for (entry in files) {
-                    val lease = graph.cache.full(provider(entry.location.sourceId), entry) { bytes, _ ->
-                        mutableState.update { if (generation == handoffGeneration) it.copy(handoff = it.handoff?.copy(read = done + bytes)) else it }
+                    val lease = graph.cache.full(provider(entry.location.sourceId), entry) { bytes, total ->
+                        // Same 100 ms pace as the preview's progress; every 128 KiB would recompose the workspace thousands of times.
+                        val now = System.nanoTime()
+                        if (now - lastProgress >= 100_000_000 || bytes == total) {
+                            lastProgress = now
+                            mutableState.update { if (generation == handoffGeneration) it.copy(handoff = it.handoff?.copy(read = done + bytes)) else it }
+                        }
                     }
                     graph.keepPicked(lease)
                     done += lease.file.length()

@@ -52,6 +52,36 @@ class MediaThumbnailsTest {
         assertThrows(IOException::class.java) { reader.readAt(9000, buffer, 0, 1) }
     }
 
+    @Test fun rangedStreamSkipsWithoutFetchingAndReadsAcrossBlocks() {
+        val (bytes, provider, entry) = media(10_000)
+        val stream = RangedStream(RangedBlocks(provider, entry, bytes.size.toLong(), budget = 100_000, block = 1024), bytes.size.toLong())
+        assertEquals(5000L, stream.skip(5000))
+        assertTrue("skipping fetches nothing", provider.offsets.isEmpty())
+        val buffer = ByteArray(1500)
+        assertEquals(1500, stream.readNBytes(buffer, 0, 1500))
+        assertArrayEquals(bytes.copyOfRange(5000, 6500), buffer)
+        assertEquals(listOf(4096L, 5120L, 6144L), provider.offsets)
+        stream.mark(0); assertEquals(bytes[6500].toInt() and 0xff, stream.read()); stream.reset()
+        assertArrayEquals(bytes.copyOfRange(6500, 10_000), stream.readBytes())
+        assertEquals(-1, stream.read())
+    }
+
+    @Test fun embeddedPreviewMustBeSharpAndTheSameShape() {
+        assertTrue(MediaThumbnails.embeddedUsable(512, 384, 4000, 3000, 320))      // typical camera preview
+        assertFalse(MediaThumbnails.embeddedUsable(160, 120, 4000, 3000, 320))     // too small for a tile
+        assertFalse(MediaThumbnails.embeddedUsable(512, 384, 4000, 2250, 320))     // 4:3 preview of a 16:9 photo
+        assertFalse(MediaThumbnails.embeddedUsable(512, 384, 0, 0, 320))           // photo size unknown
+        assertTrue(MediaThumbnails.embeddedUsable(384, 512, 3000, 4000, 320))      // portrait stored portrait
+    }
+
+    @Test fun meteredNetworksFetchOnlySmallOriginals() {
+        assertTrue(MediaThumbnails.fullDownloadAllowed(local = true, unmetered = false, size = 50L * 1024 * 1024))
+        assertTrue(MediaThumbnails.fullDownloadAllowed(local = false, unmetered = true, size = 50L * 1024 * 1024))
+        assertTrue(MediaThumbnails.fullDownloadAllowed(local = false, unmetered = false, size = 1024L * 1024))
+        assertFalse(MediaThumbnails.fullDownloadAllowed(local = false, unmetered = false, size = 5L * 1024 * 1024))
+        assertFalse(MediaThumbnails.fullDownloadAllowed(local = false, unmetered = false, size = null))
+    }
+
     @Test fun sampleSizeKeepsTheShortSideAboveTarget() {
         assertEquals(1, MediaThumbnails.sampleSize(500, 400, 320))
         assertEquals(2, MediaThumbnails.sampleSize(1280, 720, 320))

@@ -189,16 +189,24 @@ class SmbProvider(
         catch (e: Exception) { close(); throw mapped(e) }
     }
 
-    /** Sequential reads from an open SMB file starting at [position]. */
-    private class FileStream(private val file: SmbFile, private var position: Long) : InputStream() {
+    /**
+     * Sequential reads from an open SMB file starting at [position]. smbj's own stream asks for the negotiated
+     * read size (up to 1 MiB) and keeps the next request in flight while this one is consumed, so a copy is no
+     * longer one 128 KiB request per round trip.
+     */
+    private class FileStream(private val file: SmbFile, position: Long) : InputStream() {
+        private val inner: InputStream = file.inputStream.also {
+            // Skipping before the first read only moves smbj's offset; nothing is read.
+            if (position > 0 && it.skip(position) != position) throw StorageException(StorageError.READ, "파일의 요청한 위치로 이동하지 못했습니다.")
+        }
         override fun read(): Int { val one = ByteArray(1); return if (read(one, 0, 1) <= 0) -1 else one[0].toInt() and 0xff }
         override fun read(b: ByteArray, off: Int, len: Int): Int {
             if (len == 0) return 0
-            val n = try { file.read(b, position, off, len) } catch (e: SMBRuntimeException) { throw StorageException(StorageError.NETWORK, "파일을 읽는 중 연결이 끊어졌습니다.", e) }
-            if (n <= 0) return -1
-            position += n; return n
+            val n = try { inner.read(b, off, len) } catch (e: SMBRuntimeException) { throw StorageException(StorageError.NETWORK, "파일을 읽는 중 연결이 끊어졌습니다.", e) }
+            catch (e: IOException) { throw if (e is StorageException) e else StorageException(StorageError.NETWORK, "파일을 읽는 중 연결이 끊어졌습니다.", e) }
+            return if (n <= 0) -1 else n
         }
-        override fun close() { runCatching { file.close() } }
+        override fun close() { runCatching { inner.close() }; runCatching { file.close() } }
     }
 
     companion object {

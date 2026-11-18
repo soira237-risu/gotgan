@@ -99,6 +99,36 @@ class ContentCacheTest {
         assertEquals(2, arrived.get())
         assertTrue("Concurrent reservations must not overfill the cache", folder.walkTopDown().filter { it.isFile }.sumOf { it.length() } <= limit)
     }
+    @Test fun sequentialSmallReadsReturnTheRightBytesAndFetchEachBlockOnce() = runBlocking {
+        val data = ByteArray(2 * 1024 * 1024 + 5000) { (it * 7 % 253).toByte() }
+        val provider = BytesProvider(data)
+        val cache = ContentCache(temp.newFolder()) { 8 * 1024 * 1024L }
+        val out = java.io.ByteArrayOutputStream()
+        cache.channel(provider, provider.stat(StorageLocation("nas", "big.zip"))).use { channel ->
+            val buffer = ByteBuffer.allocate(64 * 1024 - 3)
+            while (true) { buffer.clear(); val n = channel.read(buffer); if (n < 0) break; out.write(buffer.array(), 0, n) }
+        }
+        assertArrayEquals(data, out.toByteArray())
+        assertEquals(listOf(0L, 1024 * 1024L, 2 * 1024 * 1024L), provider.offsets)
+        // A second channel finds the blocks on disk and fetches nothing.
+        cache.channel(provider, provider.stat(StorageLocation("nas", "big.zip"))).use { it.position(1024 * 1024L + 10); assertEquals(4, it.read(ByteBuffer.allocate(4))) }
+        assertEquals(3, provider.offsets.size)
+    }
+    @Test fun runningTotalKeepsTheCacheUnderItsLimitAndRecoversFromOutsideDeletes() = runBlocking {
+        val folder = temp.newFolder(); val limit = 1024 * 1024L
+        val cache = ContentCache(folder) { limit }
+        val provider = BytesProvider(ByteArray(300 * 1024) { 3 })
+        fun onDisk() = folder.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        repeat(8) { i ->
+            cache.full(provider, provider.stat(StorageLocation("s$i", "f"))).use { assertTrue(it.file.exists()) }
+            assertTrue("cache holds ${onDisk()} bytes", onDisk() <= limit)
+        }
+        // The system may clear cache files behind the app's back; the next download still fits and succeeds.
+        folder.walkTopDown().filter { it.isFile }.forEach { it.delete() }
+        repeat(4) { i -> cache.full(provider, provider.stat(StorageLocation("t$i", "f"))).use { assertTrue(it.file.exists()) } }
+        assertTrue(onDisk() <= limit)
+        assertEquals(3, folder.walkTopDown().count { it.isFile })
+    }
     private class BytesProvider(val bytes: ByteArray) : StorageProvider {
         var version = 1; var noRange = false; val offsets = mutableListOf<Long>()
         override suspend fun list(location: StorageLocation) = emptyList<FileEntry>()

@@ -17,8 +17,8 @@ class StorageRepository(context: Context, private val additionalProvider: (suspe
             ?: throw StorageException(StorageError.NOT_FOUND, "이동식 저장소가 연결되어 있지 않습니다. USB를 다시 연결해 주세요.")
         val profile = connections.profiles.first().firstOrNull { it.id == id }
             ?: throw StorageException(StorageError.NOT_FOUND, "저장소 연결을 찾을 수 없습니다.")
-        if (profile.protocol == Protocol.WEBDAV) return WebDavProvider(id, profile.url, profile.username, connections.password(profile))
-        // SMB and SFTP keep a logged-in session, so one provider per saved profile version is reused.
+        // SMB and SFTP keep a logged-in session, so one provider per saved profile version is reused. WebDAV is reused too:
+        // building one decrypts the password through the keystore, which every thumbnail, stat and read would repeat.
         synchronized(sessions) { sessions[id]?.takeIf { it.first == profile }?.let { return it.second } }
         val created = connect(id, profile.url, profile.username, connections.password(profile))
         val replaced = synchronized(sessions) {

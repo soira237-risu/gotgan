@@ -34,7 +34,11 @@ class PlaybackConnection(private val context: Context) {
     private var applyingTracks = false
     private val lock = Mutex()
     var controller: MediaController? = null; private set
+    /** Releases an idle controller so the playback service is no longer bound once nothing is left to play. */
+    private val idleScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var idleRelease: Job? = null
     suspend fun connect(): MediaController = withContext(Dispatchers.Main) { lock.withLock {
+        idleRelease?.cancel(); idleRelease = null
         controller ?: run {
             val future = MediaController.Builder(context, SessionToken(context, ComponentName(context, PlaybackService::class.java))).buildAsync()
             val result = withContext(Dispatchers.IO) { future.get() }
@@ -200,5 +204,15 @@ class PlaybackConnection(private val context: Context) {
         options.reset()
         details.value = PlaybackDetails()
         state.value = PlaybackState()
+        // Kept a while so a quick "play another" reuses the connection; after that the service may stop.
+        idleRelease?.cancel()
+        idleRelease = idleScope.launch {
+            delay(IDLE_RELEASE_MS)
+            lock.withLock {
+                val idle = controller?.takeIf { it.mediaItemCount == 0 && !it.playWhenReady } ?: return@withLock
+                controller = null; idle.release()
+            }
+        }
     }
+    private companion object { const val IDLE_RELEASE_MS = 30_000L }
 }

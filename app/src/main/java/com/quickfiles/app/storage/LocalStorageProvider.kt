@@ -40,10 +40,13 @@ class LocalStorageProvider(
         return file
     }
 
-    private fun entry(file: File, location: StorageLocation) = FileEntry(
-        location, if (location.path.isEmpty()) rootName else file.name, file.isDirectory,
-        if (file.isDirectory) null else file.length(), file.lastModified(),
-    )
+    /** One stat per entry; File.isDirectory, length and lastModified were three, with isDirectory asked twice. */
+    private fun entry(file: File, location: StorageLocation): FileEntry {
+        val name = if (location.path.isEmpty()) rootName else file.name
+        val attributes = try { Files.readAttributes(file.toPath(), java.nio.file.attribute.BasicFileAttributes::class.java) } catch (_: java.io.IOException) { null }
+            ?: return FileEntry(location, name, file.isDirectory, if (file.isDirectory) null else file.length(), file.lastModified())
+        return FileEntry(location, name, attributes.isDirectory, if (attributes.isDirectory) null else attributes.size(), attributes.lastModifiedTime().toMillis())
+    }
 
     override suspend fun list(location: StorageLocation): List<FileEntry> = withContext(Dispatchers.IO) {
         StorageReadMetrics.listed(location.sourceId)
@@ -100,6 +103,7 @@ class LocalStorageProvider(
         if (length != null && file.parentFile!!.usableSpace < length) throw StorageException(StorageError.NO_SPACE, "저장 공간이 부족합니다.")
         val options = if (createOnly) arrayOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE) else arrayOf(StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)
         try {
+            val space = SpaceGuard(file.parentFile!!)
             Files.newOutputStream(file.toPath(), *options).use { output ->
                 input().use { source ->
                     val buffer = ByteArray(128 * 1024)
@@ -108,7 +112,7 @@ class LocalStorageProvider(
                         coroutineContext.ensureActive()
                         val read = source.read(buffer)
                         if (read < 0) break
-                        if (file.parentFile!!.usableSpace < read) throw StorageException(StorageError.NO_SPACE, "저장 공간이 부족합니다.")
+                        space.take(read)
                         output.write(buffer, 0, read); count += read; progress(count)
                     }
                     if (length != null && count != length) throw StorageException(StorageError.READ, "파일을 끝까지 받지 못했습니다.")
@@ -147,9 +151,10 @@ class LocalStorageProvider(
             output.setLength(offset); output.seek(offset)
             input().use { stream ->
                 val buffer = ByteArray(128 * 1024); var count = 0L
+                val space = SpaceGuard(file.parentFile!!)
                 while (true) {
                     coroutineContext.ensureActive(); val n = stream.read(buffer); if (n < 0) break
-                    if (file.parentFile!!.usableSpace < n) throw StorageException(StorageError.NO_SPACE, "저장 공간이 부족합니다.")
+                    space.take(n)
                     output.write(buffer, 0, n); count += n; progress(offset + count)
                 }
                 if (remaining != null && count != remaining) throw StorageException(StorageError.NETWORK, "이어받기가 중단되었습니다.")
@@ -157,4 +162,18 @@ class LocalStorageProvider(
             }
         }
     }
+}
+
+/**
+ * Free-space check for a write loop. Asking the file system (statfs) for every 128 KiB block was a system call per
+ * block; this keeps a running estimate and asks again every [RECHECK] bytes, or on every block once space is low.
+ */
+internal class SpaceGuard(private val folder: File, private val usable: () -> Long = { folder.usableSpace }) {
+    private var free = usable(); private var sinceCheck = 0L
+    fun take(bytes: Int) {
+        if (sinceCheck >= RECHECK || free < bytes + LOW) { free = usable(); sinceCheck = 0 }
+        if (free < bytes) throw StorageException(StorageError.NO_SPACE, "저장 공간이 부족합니다.")
+        free -= bytes; sinceCheck += bytes
+    }
+    companion object { const val RECHECK = 8L * 1024 * 1024; const val LOW = 64L * 1024 * 1024 }
 }

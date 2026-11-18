@@ -37,6 +37,19 @@ class SmbProviderTest {
             assertArrayEquals(bytes, smb.openRead(target).use { it.stream.readBytes() })
             assertArrayEquals(bytes.copyOfRange(650_000, bytes.size), smb.openRead(target, 650_000, entry.revision).use { it.stream.readBytes() })
             // Moving onto an existing name is refused.
+            // Reads span several of smbj's read buffers, from the start and from an offset, with small and odd-sized reads.
+            val large = ByteArray(5 * 1024 * 1024 + 321) { (it * 31 + it / 7).toByte() }
+            val big = folder.child("big.bin")
+            smb.put(big, large.size.toLong(), { ByteArrayInputStream(large) })
+            assertArrayEquals(large, smb.openRead(big).use { it.stream.readBytes() })
+            val from = 1_234_567
+            val tail = smb.openRead(big, from.toLong(), smb.stat(big).revision).use { handle ->
+                val out = java.io.ByteArrayOutputStream(); val buffer = ByteArray(77_777)
+                while (true) { val n = handle.stream.read(buffer); if (n < 0) break; out.write(buffer, 0, n) }
+                out.toByteArray()
+            }
+            assertArrayEquals(large.copyOfRange(from, large.size), tail)
+            smb.delete(big, smb.stat(big).revision)
             smb.put(stage, 1, { ByteArrayInputStream(byteArrayOf(1)) })
             assertEquals(StorageError.CONFLICT, (runCatching { smb.move(stage, target, null) }.exceptionOrNull() as StorageException).kind)
             smb.delete(stage, smb.stat(stage).revision)

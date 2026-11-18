@@ -28,6 +28,11 @@ data class TrashItem(
     val revision: String, val isDirectory: Boolean,
     val state: String = "PREPARING", val deleted: Long = System.currentTimeMillis(),
 )
+/** Just what the dock's progress ring needs, without the task payload. */
+data class TaskProgress(val state: String, val bytes: Long, val totalBytes: Long)
+/** A finished task that history pruning may forget. */
+data class FinishedTask(val id: String, val updated: Long)
+
 @Entity(tableName = "saved_state")
 data class SavedValue(@PrimaryKey val key: String, val value: String, val updated: Long = System.currentTimeMillis())
 
@@ -36,6 +41,12 @@ interface ExplorerDao {
     @Upsert suspend fun task(task: FileTask)
     @Query("SELECT * FROM tasks WHERE id = :id") suspend fun task(id: String): FileTask?
     @Query("SELECT * FROM tasks ORDER BY created DESC") fun tasks(): Flow<List<FileTask>>
+    @Query("SELECT state, bytes, totalBytes FROM tasks WHERE state IN ('RUNNING','QUEUED','PREPARING','PAUSING','CANCELLING')") fun activeProgress(): Flow<List<TaskProgress>>
+    @Query("SELECT id FROM tasks WHERE state IN ('COMPLETE','CANCELLED')") fun finishedTaskIds(): Flow<List<String>>
+    /** Finished tasks whose record nothing needs any more; a cancelled save keeps its edit for "save as" and is never listed. */
+    @Query("SELECT id, updated FROM tasks WHERE state = 'COMPLETE' OR (state = 'CANCELLED' AND kind NOT IN ('SAVE','SAVE_AS')) ORDER BY updated DESC") suspend fun finishedTasks(): List<FinishedTask>
+    @Query("DELETE FROM task_items WHERE taskId IN (:ids)") suspend fun forgetTaskItems(ids: List<String>)
+    @Query("DELETE FROM tasks WHERE id IN (:ids)") suspend fun forgetTasks(ids: List<String>)
     @Query("SELECT * FROM tasks WHERE state = 'QUEUED' ORDER BY created LIMIT 1") suspend fun nextTask(): FileTask?
     @Query("UPDATE tasks SET state = 'PAUSED', message = '작업 상태를 확인한 뒤 재개하세요.' WHERE state IN ('RUNNING','PAUSING','CANCELLING','PREPARING')") suspend fun recoverTasks()
     @Upsert suspend fun item(item: TaskItem)

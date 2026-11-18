@@ -44,8 +44,9 @@ class AppGraph(context: Context, val repository: StorageRepository = StorageRepo
             ready.await()
             val state: suspend (String) -> String? = { dao.task(it)?.state }
             runCatching { repository.inbox.cleanup(state, processStartedAt = startedAt) }
-            // Received files are removed once the task saving them completes.
-            dao.tasks().map { tasks -> tasks.filter { it.state == "COMPLETE" || it.state == "CANCELLED" }.map { it.id }.toSet() }
+            runCatching { com.quickfiles.app.operations.TaskHistory.prune(dao) }
+            // Received files are removed once the task saving them completes. Only ids are read, not every payload on each progress tick.
+            dao.finishedTaskIds().map { it.toSet() }
                 .distinctUntilChanged().drop(1).collect { runCatching { repository.inbox.cleanup(state) } }
         }
     }

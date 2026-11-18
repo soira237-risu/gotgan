@@ -164,6 +164,46 @@ class OperationEngineTest {
         assertEquals("different source!", phone.text("input.txt"))
     }
 
+    @Test fun moveFromNasReadsTheSourceOnceToCopyAndOnceBeforeTrash() = runBlocking {
+        nas.file("in.bin", "remote original"); phone.folder("down")
+        val task = engine().enqueue("MOVE", listOf(StorageLocation("nas", "in.bin")), StorageLocation("phone", "down")); engine().drain()
+        assertEquals("COMPLETE", journal.task(task)!!.state)
+        assertEquals("remote original", phone.text("down/in.bin")); assertFalse(nas.nodes.containsKey("in.bin"))
+        // One read to copy and one to confirm the source before it goes to the trash; the stage is read back once.
+        assertEquals(2, nas.reads["in.bin"])
+        assertEquals(1, phone.reads.filterKeys { it.startsWith("down/.fileexplorer-") }.values.single())
+    }
+    @Test fun copyToNasReadsTheUploadBackOnce() = runBlocking {
+        seed()
+        val task = engine().enqueue("COPY", listOf(source()), destination()); engine().drain()
+        assertEquals("COMPLETE", journal.task(task)!!.state)
+        assertEquals(1, nas.reads.filterKeys { it.startsWith("out/.fileexplorer-") }.values.single())
+        assertEquals(1, phone.reads["input.txt"])
+    }
+    @Test fun sourceChangedAfterCopyWithSameMetadataIsNotTrashed() = runBlocking {
+        seed()
+        val mutating = object : WritableStorageProvider by nas {
+            override suspend fun put(location: StorageLocation, length: Long?, input: () -> InputStream, expected: Revision?, createOnly: Boolean, progress: (Long) -> Unit) {
+                nas.put(location, length, input, expected, createOnly, progress)
+                val old = phone.nodes.getValue("input.txt")
+                phone.nodes["input.txt"] = old.copy(bytes = "edited after copy".toByteArray())
+            }
+        }
+        val engine = OperationEngine(journal, { if (it == "phone") phone else mutating }, recordError = { _, _, _ -> })
+        val task = engine.enqueue("MOVE", listOf(source()), destination()); engine.drain()
+        assertEquals("FAILED", journal.task(task)!!.state)
+        assertEquals("edited after copy", phone.text("input.txt"))
+        assertTrue(journal.trashRows.values.none { it.state == "TRASHED" })
+    }
+    @Test fun folderMoveVerifiesNestedTreeBeforeTrashing() = runBlocking {
+        phone.folder("tree"); phone.file("tree/a.txt", "a"); phone.folder("tree/sub"); phone.file("tree/sub/b.txt", "b"); phone.file("tree/sub/c.txt", "c")
+        nas.folder("out")
+        val task = engine().enqueue("MOVE", listOf(StorageLocation("phone", "tree")), destination()); engine().drain()
+        assertEquals("COMPLETE", journal.task(task)!!.state)
+        assertEquals("b", nas.text("out/tree/sub/b.txt")); assertEquals("c", nas.text("out/tree/sub/c.txt"))
+        assertFalse(phone.nodes.containsKey("tree"))
+        assertEquals("TRASHED", journal.trashRows.values.single().state)
+    }
     @Test fun folderChangedDuringFinalVerificationIsNotTrashed() = runBlocking {
         for (removeChild in listOf(false, true)) {
             val journal = FakeJournal(); val phone = MemoryStorage("phone"); val nas = MemoryStorage("nas")
@@ -191,6 +231,8 @@ class OperationEngineTest {
         private var version = 0L
         var corrupt = false; var noSpace = false; var denyMove = false; var failAfterMove = false
         var puts = 0; var deletes = 0
+        /** Full reads per path, to count how often a transfer pulls the same bytes over the network. */
+        val reads = mutableMapOf<String, Int>()
         override val capabilities = StorageCapabilities(true, true, true)
         fun file(path: String, text: String) { nodes[path] = Node(text.toByteArray(), ++version) }
         fun folder(path: String) { nodes[path] = Node(version = ++version) }
@@ -201,7 +243,7 @@ class OperationEngineTest {
             return FileEntry(location, location.path.substringAfterLast('/'), node.bytes == null, node.bytes?.size?.toLong(), node.version, "\"${node.version}\"")
         }
         override suspend fun list(location: StorageLocation) = nodes.keys.filter { it.isNotEmpty() && this.location(it).parent() == location }.map { stat(this.location(it)) }
-        override suspend fun openRead(location: StorageLocation) = ReadHandle(ByteArrayInputStream(nodes[location.path]!!.bytes!!), nodes[location.path]!!.bytes!!.size.toLong())
+        override suspend fun openRead(location: StorageLocation) = reads.merge(location.path, 1, Int::plus).let { ReadHandle(ByteArrayInputStream(nodes[location.path]!!.bytes!!), nodes[location.path]!!.bytes!!.size.toLong()) }
         override suspend fun createDirectory(location: StorageLocation) { if (location.path in nodes) throw StorageException(StorageError.CONFLICT, "exists"); folder(location.path) }
         override suspend fun put(location: StorageLocation, length: Long?, input: () -> InputStream, expected: Revision?, createOnly: Boolean, progress: (Long) -> Unit) {
             if (noSpace) throw StorageException(StorageError.NO_SPACE, "full")

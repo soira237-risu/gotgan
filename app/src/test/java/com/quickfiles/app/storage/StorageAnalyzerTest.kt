@@ -61,6 +61,29 @@ class StorageAnalyzerTest {
         assertFalse(report.duplicatesSkipped)
     }
 
+    @Test fun largeSameSizeFilesAreSeparatedByTheirStartBeforeAnyFullRead() = runBlocking {
+        val root = temp.newFolder("big")
+        val size = 1024 * 1024
+        fun file(name: String, fill: (Int) -> Int) = File(root, name).writeBytes(ByteArray(size) { fill(it).toByte() })
+        file("a.mp4") { it % 251 }; file("a copy.mp4") { it % 251 }
+        file("other.mp4") { (it + 1) % 251 }                         // differs from the first byte
+        file("late.mp4") { if (it == size - 1) 7 else it % 251 }      // same start, differs only at the end
+        var read = 0L
+        val local = LocalStorageProvider(root) { true }
+        val counting = object : StorageProvider by local {
+            override suspend fun openRead(location: StorageLocation): ReadHandle {
+                val handle = local.openRead(location)
+                return ReadHandle(object : java.io.FilterInputStream(handle.stream) {
+                    override fun read(b: ByteArray, off: Int, len: Int) = super.read(b, off, len).also { if (it > 0) read += it }
+                }, handle.length) { handle.close() }
+            }
+        }
+        val report = StorageAnalyzer().analyze(counting, StorageLocation(LOCAL_SOURCE), includeHidden = false, findDuplicates = true)
+        assertEquals(listOf("a copy.mp4", "a.mp4"), report.duplicates.single().files.map { it.name })
+        // Four heads, then only the three files sharing a start are read in full; "other.mp4" never is.
+        assertEquals(4 * 64 * 1024L + 3L * size, read)
+    }
+
     @Test fun unreadableSubfoldersAreCountedNotFatal() = runBlocking {
         val root = temp.newFolder("phone2")
         File(root, "ok/a.txt").apply { parentFile!!.mkdirs(); writeText("abc") }

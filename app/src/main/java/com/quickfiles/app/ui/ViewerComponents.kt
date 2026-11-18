@@ -30,6 +30,7 @@ import com.quickfiles.app.ui.theme.glass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -57,6 +58,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import com.quickfiles.app.ui.icons.Symbols
 
+private const val DRAFT_PUSH_MS = 300L
+
+/** PDF render width for a page shown [shownPx] wide: rounded up to a 360px step, between 360 and 1440. */
+internal fun pdfRenderWidth(shownPx: Float): Int = ((kotlin.math.ceil(shownPx / 360f).toInt()) * 360).coerceIn(360, 1440)
+
 @Composable
 internal fun TextDocumentView(preview: PreviewState, model: ExplorerViewModel) {
     val doc = preview.document ?: return
@@ -69,7 +75,11 @@ internal fun TextDocumentView(preview: PreviewState, model: ExplorerViewModel) {
     var discard by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var text by remember(preview.entry.id, doc) { mutableStateOf(preview.draft ?: preview.decodedText) }
-    LaunchedEffect(text, editing) { model.draft(if (editing) text else null) }
+    // The draft is kept in the model so it survives the viewer leaving composition. Pushing it on every key press
+    // recomposed the whole workspace behind the editor, so it is pushed after a pause in typing, and on leaving.
+    LaunchedEffect(text, editing) { if (editing) delay(DRAFT_PUSH_MS); model.draft(if (editing) text else null, preview.entry.id) }
+    val latestDraft by rememberUpdatedState(if (editing) text else null)
+    DisposableEffect(model, preview.entry.id) { val id = preview.entry.id; onDispose { model.draft(latestDraft, id) } }
     val lines by produceState<List<String>>(emptyList(), preview.decodedText, search) {
         value = withContext(Dispatchers.Default) { preview.decodedText.lineSequence().flatMap { if (it.length > 4096) it.chunked(4096).asSequence() else sequenceOf(it) }.filter { search.isEmpty() || it.contains(search, true) }.toList() }
     }
@@ -179,7 +189,10 @@ internal fun PdfDocumentView(preview: PreviewState, model: ExplorerViewModel) {
         items(pdf.pages) { index ->
             var bitmap by remember(pdf, index) { mutableStateOf<android.graphics.Bitmap?>(null) }
             var error by remember { mutableStateOf<String?>(null) }
-            LaunchedEffect(pdf, index) { try { bitmap = pdf.render(index, 1440) } catch (e: CancellationException) { throw e } catch (e: Exception) { error = "페이지를 읽지 못했습니다. 파일 또는 연결을 확인해 주세요." } }
+            // Rendered as wide as the page is shown, in 360px steps up to 1440px, instead of always 1440px: a phone page
+            // costs about half the pixels, and zooming in renders a sharper copy while the current one stays on screen.
+            val renderWidth = with(LocalDensity.current) { pdfRenderWidth(pageWidth.toPx()) }
+            LaunchedEffect(pdf, index, renderWidth) { try { bitmap = pdf.render(index, renderWidth) } catch (e: CancellationException) { throw e } catch (e: Exception) { error = "페이지를 읽지 못했습니다. 파일 또는 연결을 확인해 주세요." } }
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 error?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error) }
                 bitmap?.let { image ->

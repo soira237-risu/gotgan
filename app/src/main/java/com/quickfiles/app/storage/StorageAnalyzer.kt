@@ -85,35 +85,60 @@ class StorageAnalyzer(
         return StorageReport(root, bytes, all.size, folders, children, largest, kinds, duplicates, !findDuplicates, unreadable)
     }
 
+    /**
+     * Same-size files are first compared by a hash of their first [HEAD_BYTES]; only files whose start also matches
+     * are read in full. Large same-size videos and photos almost always differ in their first bytes.
+     */
     private suspend fun duplicates(provider: StorageProvider, files: List<FileEntry>, progress: (ScanProgress) -> Unit): List<DuplicateGroup> {
         val candidates = files.filter { (it.size ?: 0) >= minimumDuplicateSize }.groupBy { it.size!! }.filterValues { it.size > 1 }
         val groups = mutableListOf<DuplicateGroup>()
         var hashed = 0; var hashedBytes = 0L
         for ((size, sameSize) in candidates) {
-            val byDigest = LinkedHashMap<String, MutableList<FileEntry>>()
+            val byHead = LinkedHashMap<String, MutableList<FileEntry>>()
             for (file in sameSize) {
                 coroutineContext.ensureActive()
-                val digest = try { digest(provider, file) } catch (e: StorageException) { continue }
-                byDigest.getOrPut(digest) { mutableListOf() } += file
-                hashed++; hashedBytes += size
+                val head = try { digest(provider, file, HEAD_BYTES) } catch (e: StorageException) { continue }
+                byHead.getOrPut(head) { mutableListOf() } += file
+                hashedBytes += minOf(size, HEAD_BYTES)
                 progress(ScanProgress(hashed, hashedBytes, hashing = true))
             }
-            byDigest.forEach { (digest, same) -> if (same.size > 1) groups += DuplicateGroup(size, digest, same.sortedBy { it.location.path.lowercase() }) }
+            for ((head, sameHead) in byHead) {
+                hashed += sameHead.size
+                if (sameHead.size < 2) continue
+                val byDigest = LinkedHashMap<String, MutableList<FileEntry>>()
+                for (file in sameHead) {
+                    coroutineContext.ensureActive()
+                    // A file no longer than the head was read whole already; its head hash is its full hash.
+                    val digest = if (size <= HEAD_BYTES) head else {
+                        val full = try { digest(provider, file) } catch (e: StorageException) { continue }
+                        hashedBytes += size
+                        full
+                    }
+                    byDigest.getOrPut(digest) { mutableListOf() } += file
+                    progress(ScanProgress(hashed, hashedBytes, hashing = true))
+                }
+                byDigest.forEach { (digest, same) -> if (same.size > 1) groups += DuplicateGroup(size, digest, same.sortedBy { it.location.path.lowercase() }) }
+            }
+            progress(ScanProgress(hashed, hashedBytes, hashing = true))
         }
         return groups.sortedWith(compareByDescending<DuplicateGroup> { it.reclaimable }.thenBy { it.files.first().name.lowercase() })
     }
 
-    private suspend fun digest(provider: StorageProvider, file: FileEntry): String {
+    /** SHA-256 of the file's first [limit] bytes (all of it by default). */
+    private suspend fun digest(provider: StorageProvider, file: FileEntry, limit: Long = Long.MAX_VALUE): String {
         val sha = MessageDigest.getInstance("SHA-256")
         provider.openRead(file.location).use { handle ->
             val buffer = ByteArray(128 * 1024)
-            while (true) {
+            var left = limit
+            while (left > 0) {
                 coroutineContext.ensureActive()
-                val n = handle.stream.read(buffer)
+                val n = handle.stream.read(buffer, 0, minOf(left, buffer.size.toLong()).toInt())
                 if (n < 0) break
-                sha.update(buffer, 0, n)
+                sha.update(buffer, 0, n); left -= n
             }
         }
         return sha.digest().joinToString("") { "%02x".format(it) }
     }
+
+    private companion object { const val HEAD_BYTES = 64 * 1024L }
 }
