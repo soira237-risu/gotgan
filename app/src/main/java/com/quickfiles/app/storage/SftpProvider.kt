@@ -24,10 +24,20 @@ import java.io.InputStream
 import java.security.MessageDigest
 import java.util.Base64
 
-/** Server keys Gotgan has accepted, by `host` or `[host]:port`. The first key a server presents is trusted; a different one later is refused. */
+/**
+ * Server keys the user has accepted, by `host` or `[host]:port`. A server with no accepted key is never sent the
+ * password: the connection stops with [UnverifiedHostKeyException] until the user confirms its fingerprint.
+ * A different key later is refused.
+ */
 interface HostKeys {
     suspend fun known(host: String): String?
     suspend fun trust(host: String, key: String)
+}
+
+/** The server presented a key the user has not accepted yet. The connection stopped before signing in. */
+class UnverifiedHostKeyException(val host: String, val key: String, cause: Throwable? = null) : StorageException(StorageError.TLS,
+    "처음 연결하는 서버입니다. 서버 연결 수정에서 ‘연결 확인’을 눌러 서버 키(${hostKeyFingerprint(key)})를 확인해 주세요.", cause) {
+    val fingerprint: String get() = hostKeyFingerprint(key)
 }
 
 /** OpenSSH-style `SHA256:…` fingerprint of a base64 key blob. */
@@ -49,8 +59,6 @@ class SftpProvider(
     @Volatile private var session: Session? = null
     @Volatile private var base: String = "/"
     private val idle = ArrayDeque<ChannelSftp>()
-    /** Fingerprint of a server key trusted for the first time while connecting, so a connection check can show it. */
-    @Volatile var newlyTrustedKey: String? = null; private set
 
     override suspend fun list(location: StorageLocation): List<FileEntry> = sftp { channel ->
         val path = path(location)
@@ -198,7 +206,8 @@ class SftpProvider(
         jsch.hostKeyRepository = object : HostKeyRepository {
             override fun check(h: String?, key: ByteArray): Int {
                 val encoded = Base64.getEncoder().encodeToString(key); presented = encoded
-                return if (known == null || known == encoded) HostKeyRepository.OK else HostKeyRepository.CHANGED
+                // An unknown key is not trusted on sight: with StrictHostKeyChecking=yes JSch then stops before authentication.
+                return when (known) { null -> HostKeyRepository.NOT_INCLUDED; encoded -> HostKeyRepository.OK; else -> HostKeyRepository.CHANGED }
             }
             override fun add(hostkey: HostKey?, ui: UserInfo?) {}
             override fun remove(host: String?, type: String?) {}
@@ -221,11 +230,11 @@ class SftpProvider(
             runInterruptible(Dispatchers.IO) { created.connect(timeoutMillis) }
         } catch (e: JSchException) {
             created.disconnect()
+            if (known == null && presented != null) throw UnverifiedHostKeyException(host, presented!!, e)
             if (known != null && presented != null && presented != known) throw StorageException(StorageError.TLS,
                 "서버 키가 바뀌었습니다(${hostKeyFingerprint(presented!!)}). 서버를 교체한 것이 아니라면 연결하지 마세요. 맞다면 연결을 삭제하고 다시 추가해 주세요.", e)
             throw mapped(e)
         }
-        if (known == null) presented?.let { hostKeys.trust(host, it); newlyTrustedKey = hostKeyFingerprint(it) }
         base = if (address.segments.isEmpty()) runCatching {
             runInterruptible(Dispatchers.IO) { (created.openChannel("sftp") as ChannelSftp).run { connect(timeoutMillis); try { home } finally { disconnect() } } }
         }.getOrDefault("/") else "/" + address.segments.joinToString("/")

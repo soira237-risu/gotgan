@@ -63,7 +63,11 @@ data class ConnectionEditor(
     val token: String = UUID.randomUUID().toString(), val existing: ConnectionProfile? = null,
     val name: String = "", val url: String = "", val username: String = "", val password: String = "",
     val busy: Boolean = false, val result: String? = null,
+    /** An SFTP server key the user is asked to compare with the server before Gotgan signs in. */
+    val hostKey: PendingHostKey? = null,
 )
+
+data class PendingHostKey(val host: String, val key: String, val fingerprint: String)
 
 data class ExplorerState(
     val profiles: List<ConnectionProfile> = emptyList(), val profilesReady: Boolean = false,
@@ -472,13 +476,33 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         editing?.cancel()
         mutableState.update { it.copy(editor = ConnectionEditor(existing = profile, name = profile?.name.orEmpty(), url = profile?.url.orEmpty(), username = profile?.username.orEmpty())) }
     }
-    fun updateEditor(edit: ConnectionEditor) { mutableState.update { it.copy(editor = edit.copy(result = null)) } }
+    fun updateEditor(edit: ConnectionEditor) { mutableState.update { it.copy(editor = edit.copy(result = null, hostKey = null)) } }
+
+    /** The user compared the fingerprint with the server and accepted it; check the connection again with it. */
+    fun trustHostKey() {
+        val edit = state.value.editor ?: return
+        val pending = edit.hostKey ?: return
+        if (edit.busy) return
+        mutableState.update { it.copy(editor = edit.copy(busy = true, hostKey = null, result = null)) }
+        editing = viewModelScope.launch {
+            try { store.trust(pending.host, pending.key) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                if (state.value.editor?.token == edit.token) mutableState.update { it.copy(editor = it.editor?.copy(busy = false, result = readableError(e))) }
+                return@launch
+            }
+            if (state.value.editor?.token == edit.token) {
+                mutableState.update { it.copy(editor = it.editor?.copy(busy = false)) }
+                checkOrSaveConnection(false)
+            }
+        }
+    }
     fun closeEditor() { editing?.cancel(); mutableState.update { it.copy(editor = null) } }
 
     fun checkOrSaveConnection(save: Boolean) {
         val edit = state.value.editor ?: return
         if (edit.busy) return
-        mutableState.update { it.copy(editor = edit.copy(busy = true, result = null)) }
+        mutableState.update { it.copy(editor = edit.copy(busy = true, result = null, hostKey = null)) }
         editing = viewModelScope.launch {
             try {
                 require(edit.name.isNotBlank()) { "연결 이름을 입력해 주세요." }
@@ -490,6 +514,12 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                         val pending = graph.dao.tasks().first().any { it.state !in listOf("COMPLETE", "CANCELLED") && it.payload.contains(previous.id) }
                         if (pending) throw StorageException(StorageError.BUSY, "이 연결의 파일 작업을 완료하거나 취소한 뒤 수정해 주세요.")
                         if ((previous.url != edit.url || previous.username != edit.username) && graph.dao.trashItems().first().any { it.source == previous.id && it.state != "RESTORED" }) throw StorageException(StorageError.BUSY, "이 연결의 휴지통 항목을 복원하거나 비운 뒤 주소·계정을 변경해 주세요. 새 연결을 추가할 수도 있습니다.")
+                    }
+                    // An SFTP server whose key the user has not accepted asks for that first, so saving never skips it.
+                    val address = validatedAddress(edit.url)
+                    if (Protocol.of(address) == Protocol.SFTP && store.known(RemoteAddress.parse(address).hostKey) == null) {
+                        val probe = graph.repository.connect(edit.existing?.id ?: "connection-test", address, edit.username, password)
+                        try { probe.list(StorageLocation(edit.existing?.id ?: "connection-test")) } finally { (probe as? java.io.Closeable)?.close() }
                     }
                     // Purge before committing credentials, even if the saving job is cancelled later.
                     edit.existing?.id?.let { sourceId ->
@@ -503,10 +533,13 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                     val sourceId = edit.existing?.id ?: "connection-test"
                     val provider = graph.repository.connect(sourceId, validatedAddress(edit.url), edit.username, password)
                     val entries = try { provider.list(StorageLocation(sourceId)) } finally { (provider as? java.io.Closeable)?.close() }
-                    val key = (provider as? SftpProvider)?.newlyTrustedKey?.let { "\n처음 본 서버 키를 신뢰했습니다: $it" }.orEmpty()
-                    if (state.value.editor?.token == edit.token) mutableState.update { it.copy(editor = it.editor?.copy(busy = false, result = "연결 성공 · 항목 ${entries.size}개$key")) }
+                    if (state.value.editor?.token == edit.token) mutableState.update { it.copy(editor = it.editor?.copy(busy = false, result = "연결 성공 · 항목 ${entries.size}개")) }
                 }
             } catch (e: CancellationException) { throw e }
+            catch (e: UnverifiedHostKeyException) {
+                val message = "처음 연결하는 서버입니다. 아래 서버 키 지문이 서버에서 확인한 값과 같을 때만 신뢰해 주세요. 신뢰하기 전에는 비밀번호를 보내지 않습니다.\n${e.fingerprint}"
+                if (state.value.editor?.token == edit.token) mutableState.update { it.copy(editor = it.editor?.copy(busy = false, result = message, hostKey = PendingHostKey(e.host, e.key, e.fingerprint))) }
+            }
             catch (e: Exception) {
                 val message = if (e is IllegalArgumentException) e.message else readableError(e)
                 if (state.value.editor?.token == edit.token) mutableState.update { it.copy(editor = it.editor?.copy(busy = false, result = message)) }
@@ -702,7 +735,10 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                 if (uris.isEmpty()) return@launch
                 val intent = android.content.Intent(android.content.Intent.ACTION_SEND_MULTIPLE).setType("*/*").putParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, uris).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 intent.clipData = android.content.ClipData.newUri(context.contentResolver, "선택한 파일", uris.first()).apply { uris.drop(1).forEach { addItem(android.content.ClipData.Item(it)) } }
-                context.startActivity(android.content.Intent.createChooser(intent, "파일 공유").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                // Gotgan's own "save to Gotgan" target refuses its own files, so it is not offered here.
+                val chooser = android.content.Intent.createChooser(intent, "파일 공유").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(android.content.Intent.EXTRA_EXCLUDE_COMPONENTS, arrayOf(android.content.ComponentName(context, com.quickfiles.app.MainActivity::class.java)))
+                context.startActivity(chooser)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { notice(readableError(e)) }
         }
