@@ -12,6 +12,12 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.Paths
+import com.quickfiles.app.operations.FakeJournal
+import com.quickfiles.app.operations.OperationEngine
+import org.json.JSONArray
+import org.json.JSONObject
 
 /** Runs the provider against a real SFTP server (Apache MINA SSHD) serving a temporary folder. */
 class SftpProviderTest {
@@ -74,6 +80,49 @@ class SftpProviderTest {
             sftp.delete(folder, sftp.stat(folder).revision)
             assertFalse(File(root, "Docs").exists())
             assertEquals(StorageError.NOT_FOUND, (runCatching { sftp.stat(folder) }.exceptionOrNull() as StorageException).kind)
+        } finally { sftp.close() }
+    }
+
+    @Test fun folderLinksAreNeverWalkedByEmptyTrashCopyOrZip() = runBlocking {
+        val root = temp.newFolder("links")
+        File(root, "docs").mkdirs(); File(root, "docs/keep.txt").writeText("must survive")
+        File(root, "photos").mkdirs(); File(root, "photos/a.jpg").writeText("photo")
+        // One link reaches outside the folder, one loops back up the tree.
+        Files.createSymbolicLink(File(root, "photos/backup").toPath(), Paths.get("../docs"))
+        Files.createSymbolicLink(File(root, "photos/up").toPath(), Paths.get(".."))
+        File(root, "copies").mkdirs()
+        val server = server(root, File(temp.root, "links.key"))
+        val sftp = SftpProvider("nas", "sftp://127.0.0.1:${server.port}/", "dj", "secret", MemoryKeys())
+        val journal = FakeJournal()
+        val engine = OperationEngine(journal, { sftp }, workRoot = temp.newFolder("work"), recordError = { _, _, _ -> })
+        try {
+            val listed = sftp.list(StorageLocation("nas", "photos")).associateBy { it.name }
+            assertTrue(listed.getValue("backup").isLinkedDirectory); assertTrue(listed.getValue("up").isLinkedDirectory)
+            assertFalse(listed.getValue("a.jpg").isLink)
+            assertTrue(sftp.stat(StorageLocation("nas", "photos/backup")).isLinkedDirectory)
+
+            // Copying the folder copies its own files and leaves the links out instead of looping.
+            val copy = engine.enqueue("COPY", listOf(StorageLocation("nas", "photos")), StorageLocation("nas", "copies"))
+            engine.drain()
+            assertEquals("photo", File(root, "copies/photos/a.jpg").readText())
+            assertFalse(File(root, "copies/photos/backup").exists()); assertFalse(File(root, "copies/photos/up").exists())
+            assertEquals("PARTIAL", journal.task(copy)!!.state)
+
+            val zip = engine.enqueue("ZIP", listOf(StorageLocation("nas", "photos")), StorageLocation("nas", "photos.zip"))
+            engine.drain()
+            assertEquals("COMPLETE", journal.task(zip)!!.state)
+            val names = java.util.zip.ZipFile(File(root, "photos.zip")).use { z -> z.entries().toList().map { it.name } }
+            assertEquals(listOf("photos/", "photos/a.jpg"), names.sorted())
+
+            // Emptying the trash removes the links themselves and nothing they point to.
+            engine.enqueue("TRASH", listOf(StorageLocation("nas", "photos"))); engine.drain()
+            val trash = journal.trashRows.values.single()
+            val purge = engine.enqueue("PURGE", extra = JSONObject().put("trashIds", JSONArray(listOf(trash.id))))
+            engine.drain()
+            assertEquals("COMPLETE", journal.task(purge)!!.state)
+            assertEquals("must survive", File(root, "docs/keep.txt").readText())
+            assertFalse(File(root, trash.directory).exists())
+            assertTrue(File(root, "copies/photos/a.jpg").exists())
         } finally { sftp.close() }
     }
 

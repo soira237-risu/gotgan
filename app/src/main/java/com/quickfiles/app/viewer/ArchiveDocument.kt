@@ -2,6 +2,8 @@ package com.quickfiles.app.viewer
 
 import com.quickfiles.app.storage.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.apache.commons.compress.PasswordRequiredException
 import org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry
 import org.apache.commons.compress.archivers.sevenz.SevenZFile
@@ -102,11 +104,18 @@ class ArchiveDocument private constructor(private val backend: Backend, val entr
         require(index >= 0 && !entry.isDirectory)
         return backend.open(index)
     }
-    suspend fun preview(entry: ArchiveItem, maximum: Int): ByteArray = withContext(Dispatchers.IO) {
-        open(entry).use { stream ->
-            val bytes = stream.readAtMost(maximum + 1)
-            if (bytes.size > maximum) throw StorageException(StorageError.TOO_LARGE, "압축파일 미리보기 제한을 초과했습니다.")
-            bytes
+    /**
+     * Previews run one at a time. Paging quickly cancels a preview while its blocking read is still running;
+     * tar shares one cursor and 7z is not thread-safe, so the next preview waits for that read to stop.
+     */
+    private val reading = Mutex()
+    suspend fun preview(entry: ArchiveItem, maximum: Int): ByteArray = reading.withLock {
+        withContext(Dispatchers.IO) {
+            open(entry).use { stream ->
+                val bytes = stream.readAtMost(maximum + 1)
+                if (bytes.size > maximum) throw StorageException(StorageError.TOO_LARGE, "압축파일 미리보기 제한을 초과했습니다.")
+                bytes
+            }
         }
     }
     override fun close() = backend.close()

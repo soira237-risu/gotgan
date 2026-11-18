@@ -1,6 +1,8 @@
 package com.quickfiles.app.storage
 
 import com.quickfiles.app.viewer.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.apache.commons.compress.archivers.sevenz.SevenZOutputFile
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
@@ -94,5 +96,15 @@ class ArchiveFormatsTest {
         val fake = temp.newFile("fake.tar.gz").apply { writeText("not gzip at all") }
         val error = assertThrows(StorageException::class.java) { open(fake) }
         assertEquals(StorageError.READ, error.kind)
+    }
+
+    @Test fun overlappingPreviewsOfOneTarEachGetTheirOwnBytes() = runBlocking {
+        // Paging quickly starts a new preview while the previous read still runs; the tar cursor is shared.
+        val doc = open(temp.newFile("pages.tar.gz").also { tar(GzipCompressorOutputStream(it.outputStream())) })
+        doc.use {
+            val files = doc.entries.filterNot { it.isDirectory }
+            val reads = (1..40).map { i -> val item = files[i % files.size]; item to async(Dispatchers.IO) { doc.preview(item, 1_000_000) } }
+            for ((item, read) in reads) assertArrayEquals(item.name, members.getValue(item.name), read.await())
+        }
     }
 }

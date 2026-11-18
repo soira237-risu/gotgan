@@ -65,6 +65,7 @@ class StorageAnalyzer(
         while (queue.isNotEmpty()) {
             coroutineContext.ensureActive()
             val (entry, owner) = queue.removeFirst()
+            if (entry.isLinkedDirectory) continue // its files belong to the link's target and a link can loop back up the tree
             if (entry.isDirectory) {
                 folders++
                 val children = try { provider.list(entry.location) } catch (e: StorageException) { unreadable++; continue }

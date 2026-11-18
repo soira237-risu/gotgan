@@ -70,6 +70,8 @@ class MainActivity : ComponentActivity() {
         if (hasStorageAccess) settingsUnavailable = false
         // Free space and volumes may have changed while away, e.g. after formatting in system settings.
         AppGraph.get(this).repository.volumes.refresh()
+        // Files may have arrived from other apps while away; open phone folders show them without a manual refresh.
+        models.forEach { it.revalidate() }
     }
 
     override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {

@@ -185,19 +185,69 @@ class OperationEngineTest {
         }
     }
 
+    @Test fun copyIntoItsOwnFolderMakesACopyOnlyWhenAskedForANewName() = runBlocking {
+        phone.file("docs/report.txt", "original"); phone.folder("docs")
+        val engine = engine()
+        val copy = engine.enqueue("COPY", listOf(StorageLocation("phone", "docs/report.txt")), StorageLocation("phone", "docs"), ConflictPolicy.RENAME)
+        engine.drain()
+        assertEquals("COMPLETE", journal.task(copy)!!.state)
+        assertEquals("original", phone.text("docs/report (1).txt")); assertEquals("original", phone.text("docs/report.txt"))
+        // Any other choice says why nothing happened instead of reporting a silent skip.
+        val skip = engine.enqueue("COPY", listOf(StorageLocation("phone", "docs/report.txt")), StorageLocation("phone", "docs"), ConflictPolicy.SKIP)
+        engine.drain()
+        assertEquals("FAILED", journal.task(skip)!!.state)
+        assertTrue(journal.task(skip)!!.message.contains("새 이름으로 보관"))
+        assertEquals(setOf("docs", "docs/report.txt", "docs/report (1).txt"), phone.nodes.keys - "")
+    }
+    @Test fun renamingOnlyTheLetterCaseWorksOnCaseInsensitiveStorage() = runBlocking {
+        phone.ignoreCase = true
+        phone.file("photo.JPG", "pixels"); phone.folder("trip"); phone.file("trip/a.txt", "inside")
+        val engine = engine()
+        val file = engine.enqueue("RENAME", listOf(StorageLocation("phone", "photo.JPG")), StorageLocation("phone"), extra = JSONObject().put("name", "photo.jpg"))
+        val folder = engine.enqueue("RENAME", listOf(StorageLocation("phone", "trip")), StorageLocation("phone"), extra = JSONObject().put("name", "Trip"))
+        engine.drain()
+        assertEquals("COMPLETE", journal.task(file)!!.state); assertEquals("COMPLETE", journal.task(folder)!!.state)
+        assertEquals(setOf("photo.jpg", "Trip", "Trip/a.txt"), phone.nodes.keys - "")
+        assertEquals("pixels", phone.text("photo.jpg")); assertEquals("inside", phone.text("Trip/a.txt"))
+    }
+    @Test fun aDifferentFileWithTheNewCaseIsNeverReplaced() = runBlocking {
+        // Storage that keeps case apart (SFTP) can hold both names; the rename is skipped, nothing overwritten.
+        nas.file("a.txt", "lower"); nas.file("A.txt", "upper")
+        val engine = engine()
+        val task = engine.enqueue("RENAME", listOf(StorageLocation("nas", "a.txt")), StorageLocation("nas"), extra = JSONObject().put("name", "A.txt"))
+        engine.drain()
+        assertEquals("PARTIAL", journal.task(task)!!.state)
+        assertEquals("lower", nas.text("a.txt")); assertEquals("upper", nas.text("A.txt"))
+    }
+    @Test fun aTaskPausedBeforeItStartsStaysPaused() = runBlocking {
+        seed()
+        // Paused in the moment between being picked from the queue and starting.
+        val racing = object : ExplorerDao by journal {
+            override suspend fun nextTask() = journal.nextTask()?.also { journal.task(it.copy(state = "PAUSED", message = "일시정지됨")) }
+        }
+        val engine = OperationEngine(racing, { if (it == "phone") phone else nas }, recordError = { _, _, _ -> })
+        val task = engine.enqueue("COPY", listOf(source()), destination())
+        engine.drain()
+        assertEquals("PAUSED", journal.task(task)!!.state)
+        assertFalse(nas.nodes.containsKey("out/input.txt"))
+    }
+
     class MemoryStorage(private val id: String) : WritableStorageProvider {
         data class Node(val bytes: ByteArray? = null, val version: Long)
         val nodes = linkedMapOf("" to Node(version = 0))
         private var version = 0L
         var corrupt = false; var noSpace = false; var denyMove = false; var failAfterMove = false
         var puts = 0; var deletes = 0
+        /** Like shared phone storage: names are found regardless of letter case, but kept as written. */
+        var ignoreCase = false
+        private fun stored(path: String) = if (!ignoreCase) path else nodes.keys.firstOrNull { it.equals(path, ignoreCase = true) } ?: path
         override val capabilities = StorageCapabilities(true, true, true)
         fun file(path: String, text: String) { nodes[path] = Node(text.toByteArray(), ++version) }
         fun folder(path: String) { nodes[path] = Node(version = ++version) }
         fun text(path: String) = nodes[path]!!.bytes!!.toString(Charsets.UTF_8)
         private fun location(path: String) = StorageLocation(id, path)
         override suspend fun stat(location: StorageLocation): FileEntry {
-            val node = nodes[location.path] ?: throw StorageException(StorageError.NOT_FOUND, "missing")
+            val node = nodes[stored(location.path)] ?: throw StorageException(StorageError.NOT_FOUND, "missing")
             return FileEntry(location, location.path.substringAfterLast('/'), node.bytes == null, node.bytes?.size?.toLong(), node.version, "\"${node.version}\"")
         }
         override suspend fun list(location: StorageLocation) = nodes.keys.filter { it.isNotEmpty() && this.location(it).parent() == location }.map { stat(this.location(it)) }
@@ -214,9 +264,10 @@ class OperationEngineTest {
         override suspend fun move(source: StorageLocation, destination: StorageLocation, expected: Revision?) {
             if (denyMove) throw StorageException(StorageError.ACCESS, "denied")
             if (expected != null && !expected.matches(stat(source).revision)) throw StorageException(StorageError.CONFLICT, "changed")
-            if (destination.path in nodes) throw StorageException(StorageError.CONFLICT, "exists")
-            val moving = nodes.filterKeys { it == source.path || it.startsWith(source.path + "/") }
-            moving.forEach { (path, node) -> nodes[destination.path + path.removePrefix(source.path)] = node; nodes.remove(path) }
+            if (stored(destination.path) in nodes) throw StorageException(StorageError.CONFLICT, "exists")
+            val from = stored(source.path)
+            val moving = nodes.filterKeys { it == from || it.startsWith("$from/") }
+            moving.forEach { (path, node) -> nodes.remove(path); nodes[destination.path + path.removePrefix(from)] = node }
             if (failAfterMove) throw StorageException(StorageError.NETWORK, "ack lost")
         }
         override suspend fun delete(location: StorageLocation, expected: Revision?) {

@@ -59,13 +59,14 @@ class SftpProvider(
         channel.ls(quote(path)).filter { it.filename != "." && it.filename != ".." && it.filename.none { c -> c == '/' || c == '\u0000' } }.map { item ->
             val child = location.child(item.filename)
             val resolved = if (item.attrs.isLink) runCatching { channel.stat(quote("$path/${item.filename}")) }.getOrNull() else item.attrs
-            if (resolved == null) FileEntry(child, item.filename, false, accessError = "연결 대상을 찾을 수 없는 링크입니다.")
-            else entry(child, item.filename, resolved)
+            if (resolved == null) FileEntry(child, item.filename, false, accessError = "연결 대상을 찾을 수 없는 링크입니다.", isLink = true)
+            else entry(child, item.filename, resolved, item.attrs.isLink)
         }
     }
 
     override suspend fun stat(location: StorageLocation): FileEntry = sftp { channel ->
-        entry(location, location.path.substringAfterLast('/').ifEmpty { address.segments.lastOrNull() ?: address.host }, channel.stat(quote(path(location))))
+        val (attrs, link) = attributes(channel, path(location))
+        entry(location, location.path.substringAfterLast('/').ifEmpty { address.segments.lastOrNull() ?: address.host }, attrs, link)
     }
 
     override suspend fun openRead(location: StorageLocation): ReadHandle = openRead(location, 0, null)
@@ -123,9 +124,10 @@ class SftpProvider(
 
     override suspend fun delete(location: StorageLocation, expected: Revision?) = sftp<Unit> { channel ->
         require(location.path.isNotEmpty())
-        val attrs = verify(channel, location, expected)
+        val (attrs, link) = verify(channel, location, expected)
         // Deliberately non-recursive, like the phone provider: the engine removes each child itself.
-        if (attrs.isDir) channel.rmdir(quote(path(location))) else channel.rm(quote(path(location)))
+        // A link is removed as a link, never through its target, even when the target is a folder.
+        if (attrs.isDir && !link) channel.rmdir(quote(path(location))) else channel.rm(quote(path(location)))
     }
 
     override suspend fun availableBytes(location: StorageLocation): Long? = runCatching {
@@ -137,19 +139,30 @@ class SftpProvider(
         session?.disconnect(); session = null
     }
 
-    private fun verify(channel: ChannelSftp, location: StorageLocation, expected: Revision?): SftpATTRS {
-        val attrs = channel.stat(quote(path(location)))
-        if (expected != null && !expected.matches(entry(location, "", attrs).revision)) throw StorageException(StorageError.CONFLICT, "작업 시작 후 파일이 변경되었습니다.")
-        return attrs
+    private fun verify(channel: ChannelSftp, location: StorageLocation, expected: Revision?): Pair<SftpATTRS, Boolean> {
+        val (attrs, link) = attributes(channel, path(location))
+        if (expected != null && !expected.matches(entry(location, "", attrs, link).revision)) throw StorageException(StorageError.CONFLICT, "작업 시작 후 파일이 변경되었습니다.")
+        return attrs to link
+    }
+
+    /**
+     * The item's own attributes from `lstat`, so a link is known as a link. A link reports its target's
+     * attributes (what `stat` gives) for display and revisions; a dangling link reports its own, as a file.
+     */
+    private fun attributes(channel: ChannelSftp, path: String): Pair<SftpATTRS, Boolean> {
+        val own = channel.lstat(quote(path))
+        if (!own.isLink) return own to false
+        val target = try { channel.stat(quote(path)) } catch (e: SftpException) { if (e.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) own else throw e }
+        return target to true
     }
 
     private fun exists(channel: ChannelSftp, path: String) = try { channel.lstat(quote(path)); true }
         catch (e: SftpException) { if (e.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) false else throw e }
 
-    private fun entry(location: StorageLocation, name: String, attrs: SftpATTRS): FileEntry {
+    private fun entry(location: StorageLocation, name: String, attrs: SftpATTRS, link: Boolean = false): FileEntry {
         val modified = attrs.mTime.toLong() * 1000
         val size = if (attrs.isDir) null else attrs.size
-        return FileEntry(location, name, attrs.isDir, size, modified, etag = "\"sftp-${attrs.size}-${attrs.mTime}\"")
+        return FileEntry(location, name, attrs.isDir, size, modified, etag = "\"sftp-${attrs.size}-${attrs.mTime}\"", isLink = link)
     }
 
     private fun path(location: StorageLocation): String = if (location.path.isEmpty()) base else base.trimEnd('/') + "/" + location.path

@@ -81,7 +81,8 @@ class PlaybackService : MediaSessionService() {
             while (isActive) {
                 delay(5_000)
                 val item = player.currentMediaItem ?: continue
-                graph.dao.save(SavedValue("playback:${item.mediaId}", player.currentPosition.toString()))
+                val position = resumePosition(player.currentPosition, player.duration, player.playbackState == Player.STATE_ENDED)
+                graph.dao.save(SavedValue("playback:${item.mediaId}", position.toString()))
             }
         }
     }
@@ -137,6 +138,10 @@ class PlaybackService : MediaSessionService() {
             val previousId = observedMediaId
             val selectedId = mediaItem?.mediaId.orEmpty()
             observedMediaId = selectedId
+            // A playlist moving on by itself means the previous item played to its end; reopen it from the start.
+            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && previousId.isNotEmpty() && previousId != selectedId) {
+                scope.launch { graph.dao.save(SavedValue("playback:$previousId", "0")) }
+            }
             if (timer.onCurrentItemChanged(selectedId)) {
                 player.setPauseAtEndOfMediaItems(false)
                 publishSessionState()

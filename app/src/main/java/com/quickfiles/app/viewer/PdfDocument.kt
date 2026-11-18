@@ -12,7 +12,6 @@ import com.quickfiles.app.storage.FileEntry
 import kotlinx.coroutines.*
 import java.io.Closeable
 import java.io.File
-import java.nio.ByteBuffer
 import java.nio.channels.SeekableByteChannel
 import java.util.UUID
 
@@ -48,7 +47,7 @@ class PdfDocument private constructor(private val context: Context, private val 
                     object : ProxyFileDescriptorCallback() {
                         override fun onGetSize() = channel.size()
                         override fun onRead(offset: Long, size: Int, data: ByteArray): Int = try {
-                            synchronized(channel) { channel.position(offset); channel.read(ByteBuffer.wrap(data, 0, size)).coerceAtLeast(0) }
+                            synchronized(channel) { readFully(channel, offset, data, size) }
                         } catch (_: Exception) { throw ErrnoException("pdf_read", OsConstants.EIO) }
                         override fun onRelease() { channel.close() }
                     }, Handler(thread.looper))
