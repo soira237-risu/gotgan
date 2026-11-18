@@ -22,3 +22,13 @@ internal class SeekDrag(
         return SeekPreview(mediaId, sessionId, origin, target.roundToLong(), fine)
     }
 }
+
+/** A finished item, or one stopped within this margin of its end, opens from the start next time. */
+internal const val RESUME_END_MARGIN_MS = 5_000L
+
+/** The position to remember for reopening an item: 0 once it has played to (or nearly to) its end. */
+internal fun resumePosition(position: Long, duration: Long, ended: Boolean): Long = when {
+    ended || position < 0 -> 0
+    duration > 0 && position >= duration - RESUME_END_MARGIN_MS -> 0
+    else -> position
+}

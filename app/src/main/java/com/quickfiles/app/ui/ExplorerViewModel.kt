@@ -123,29 +123,48 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
     private var handing: Job? = null
     private var handoffGeneration = 0
     private val textHistory = mutableListOf<Long>()
+    private class Relist(val location: StorageLocation, val quiet: Boolean)
+    /** Re-reads of the open folder; only the latest request matters. */
+    private val relists = kotlinx.coroutines.channels.Channel<Relist>(kotlinx.coroutines.channels.Channel.CONFLATED)
+
+    /**
+     * Shows outside changes (downloads, camera, other apps) in an open phone or memory card folder, e.g. when
+     * returning to the app. Remote folders keep their cached listing until refreshed, to spare the network.
+     */
+    fun revalidate() {
+        val current = state.value
+        val location = current.location ?: return
+        if (current.loading || !isLocalSource(location.sourceId) || !current.hasPermission) return
+        relists.trySend(Relist(location, quiet = true))
+    }
 
     init {
         viewModelScope.launch {
+            // Collect quickly so a burst of changes never fills the engine's buffer; the listing itself is conflated below.
             graph.operations.changed.collect { location ->
                 folders.remove(location.key)
                 if (isVolumeSource(location.sourceId)) graph.repository.volumes.refresh()
-                if (state.value.location == location) {
-                    val generation = browseGeneration
-                    try {
-                        val entries = provider(location.sourceId).list(location).filterNot { OperationEngine.isManagedName(it.name) }
-                        val order = SortSpec(state.value.sort, state.value.direction)
-                        val sorted = withContext(Dispatchers.Default) { sortedEntries(entries, order) }
-                        val presentIds = sorted.mapTo(HashSet()) { it.id }
-                        if (generation == browseGeneration) {
-                            mutableState.update { current ->
-                                val removedIds = current.entries.filterNot { it.id in presentIds }.mapTo(HashSet()) { it.id }
-                                current.copy(entries = sorted, selected = current.selected - removedIds)
-                            }
-                            rememberFolder()
+                if (state.value.location == location) relists.trySend(Relist(location, quiet = false))
+            }
+        }
+        viewModelScope.launch {
+            for (request in relists) {
+                if (state.value.location != request.location) continue
+                val generation = browseGeneration
+                try {
+                    val entries = provider(request.location.sourceId).list(request.location).filterNot { OperationEngine.isManagedName(it.name) }
+                    val order = SortSpec(state.value.sort, state.value.direction)
+                    val sorted = withContext(Dispatchers.Default) { sortedEntries(entries, order) }
+                    val presentIds = sorted.mapTo(HashSet()) { it.id }
+                    if (generation == browseGeneration && state.value.location == request.location) {
+                        mutableState.update { current ->
+                            val removedIds = current.entries.filterNot { it.id in presentIds }.mapTo(HashSet()) { it.id }
+                            current.copy(entries = sorted, selected = current.selected - removedIds)
                         }
-                    } catch (e: CancellationException) { throw e }
-                    catch (e: Exception) { notice(readableError(e)) }
-                }
+                        rememberFolder()
+                    }
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { if (!request.quiet && generation == browseGeneration) notice(readableError(e)) }
             }
         }
         refreshPlaces()
@@ -213,7 +232,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
             val remembered = graph.dao.saved(viewKey(location))?.value?.let { it == "grid" }
             if (state.value.location == location) mutableState.update { it.copy(gridOverride = remembered) }
         }
-        if (canUseCache) return
+        if (canUseCache) { revalidate(); return }
         browsing = viewModelScope.launch {
             try {
                 val source = provider(location.sourceId)
@@ -430,11 +449,20 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                 imageLease = lease
                 val document = if (entry.isText) TextDocument.read(source, entry) else null
                 val text = document?.let { TextPreview(it.bytes, !it.complete) }
-                val pdf = if (entry.isPdf) PdfDocument.open(getApplication(), entry) else null
-                val archive = if (entry.isArchive) ArchiveDocument.open(graph.cache.channel(source, entry), ArchiveFormat.detect(entry.name) ?: ArchiveFormat.Zip) else null
-                val decoded = withContext(Dispatchers.Default) { document?.decode().orEmpty() }
-                if (generation == viewGeneration) mutableState.update { it.copy(preview = it.preview?.copy(loading = false, asset = lease?.file, text = text, document = document, decodedText = decoded, pdf = pdf, archive = archive)) }
-                else { pdf?.close(); archive?.close() }
+                // Opened documents belong to this load until the preview state takes them; a cancelled or
+                // superseded load closes them, or the PDF process binding and cache pins would leak.
+                var pdf: PdfDocument? = null; var archive: ArchiveDocument? = null; var handedOver = false
+                try {
+                    pdf = if (entry.isPdf) PdfDocument.open(getApplication(), entry) else null
+                    archive = if (entry.isArchive) ArchiveDocument.open(graph.cache.channel(source, entry), ArchiveFormat.detect(entry.name) ?: ArchiveFormat.Zip) else null
+                    val decoded = withContext(Dispatchers.Default) { document?.decode().orEmpty() }
+                    if (generation == viewGeneration) {
+                        mutableState.update { it.copy(preview = it.preview?.copy(loading = false, asset = lease?.file, text = text, document = document, decodedText = decoded, pdf = pdf, archive = archive)) }
+                        handedOver = true
+                    }
+                } finally {
+                    if (!handedOver && (pdf != null || archive != null)) { val p = pdf; val a = archive; graph.scope.launch { p?.close(); a?.close() } }
+                }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { DiagnosticLog.record("PREVIEW", "read", e); if (generation == viewGeneration) mutableState.update { it.copy(preview = it.preview?.copy(loading = false, error = readableError(e))) } }
         }
@@ -575,7 +603,7 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                     val entries = source.list(queue.removeFirst()).filterNot { OperationEngine.isManagedName(it.name) }
                     for (entry in entries) {
                         if (entry.name.contains(term, true) && (term.isNotBlank() || filters.matches(entry))) found += entry
-                        if (entry.isDirectory && (settings.value.showHidden || !entry.name.startsWith('.'))) queue.add(entry.location)
+                        if (entry.isDirectory && !entry.isLink && (settings.value.showHidden || !entry.name.startsWith('.'))) queue.add(entry.location)
                     }
                     ensureActive()
                     if (generation == searchGeneration) mutableState.update { it.copy(searchResults = sortedEntries(found.toList(), SortSpec(it.sort, it.direction))) }
@@ -623,11 +651,15 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
         viewing = viewModelScope.launch {
             try {
                 val old = current.document ?: return@launch
-                val offset = if (forEdit) 0 else if (previous) textHistory.removeLastOrNull() ?: 0 else (old.start + old.bytes.size).also { textHistory.add(old.start) }
+                // History changes only once the chunk is shown, so a failed or cancelled read leaves '이전' where it was.
+                val offset = if (forEdit) 0 else if (previous) textHistory.lastOrNull() ?: 0 else old.start + old.bytes.size
                 val maximum = if (forEdit) TextDocument.EDIT_LIMIT else TextDocument.CHUNK
                 val doc = TextDocument.read(provider(current.entry.location.sourceId), current.entry, maximum, current.cp949, offset, old.revision, old.charset.name())
                 val decoded = withContext(Dispatchers.Default) { doc.decode() }
-                if (generation == viewGeneration) mutableState.update { it.copy(preview = current.copy(loading = false, document = doc, text = TextPreview(doc.bytes, !doc.complete), decodedText = decoded)) }
+                if (generation == viewGeneration) {
+                    mutableState.update { it.copy(preview = current.copy(loading = false, document = doc, text = TextPreview(doc.bytes, !doc.complete), decodedText = decoded)) }
+                    if (!forEdit) { if (previous) textHistory.removeLastOrNull() else textHistory.add(old.start) }
+                }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { if (generation == viewGeneration) mutableState.update { it.copy(preview = current.copy(loading = false, error = readableError(e))) } }
         }
@@ -765,7 +797,8 @@ class ExplorerViewModel(application: Application, private val saved: SavedStateH
                     done += lease.file.length()
                     uris += androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", lease.file, entry.name)
                 }
-                if (generation == handoffGeneration) request.deliver(uris)
+                // The Activity that asked may have been recreated (rotation) while files downloaded; answer through the current one.
+                if (generation == handoffGeneration) picker?.deliver(uris)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { DiagnosticLog.record("HANDOFF", "pick", e); notice(readableError(e)) }
             finally { if (generation == handoffGeneration) mutableState.update { it.copy(handoff = null) } }

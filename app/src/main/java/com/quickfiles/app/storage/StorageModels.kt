@@ -28,8 +28,12 @@ data class FileEntry(
     val modified: Long? = null,
     val etag: String? = null,
     val accessError: String? = null,
+    /** A symbolic link; size, date and [isDirectory] describe its target. Recursive work must not descend into it. */
+    val isLink: Boolean = false,
 ) {
     val id: String get() = location.key
+    /** A folder reached through a link: shown and browsable, but never walked by delete, copy, ZIP, search or analysis. */
+    val isLinkedDirectory: Boolean get() = isLink && isDirectory
     val extension: String get() = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
     val isImage: Boolean get() = !isDirectory && FileFormats.isImage(name)
     val isText: Boolean get() = !isDirectory && FileFormats.isText(name)

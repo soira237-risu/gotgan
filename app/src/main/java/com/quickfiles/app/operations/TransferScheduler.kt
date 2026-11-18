@@ -17,8 +17,11 @@ object TransferScheduler {
     const val NOTIFICATION = 1200
     private const val JOB = 1200
     private const val CHANNEL = "file-transfers"
+    internal val networkJob = DrainGate()
     fun schedule(context: Context, network: Boolean) {
         if (Build.VERSION.SDK_INT >= 34 && network) {
+            // Rescheduling the same job ID would stop the running job; let it pick the new task up instead.
+            if (!networkJob.request()) return
             val job = JobInfo.Builder(JOB, ComponentName(context, TransferJobService::class.java))
                 .setUserInitiated(true).setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).build()
             check(context.getSystemService(JobScheduler::class.java).schedule(job) == JobScheduler.RESULT_SUCCESS) { "전송 작업을 시작하지 못했습니다. 앱에서 재개해 주세요." }
@@ -52,13 +55,22 @@ class TransferJobService : JobService() {
     private var job: Job? = null
     override fun onStartJob(params: JobParameters): Boolean {
         if (Build.VERSION.SDK_INT >= 34) setNotification(params, TransferScheduler.NOTIFICATION, TransferScheduler.notification(this), JOB_END_NOTIFICATION_POLICY_REMOVE)
+        TransferScheduler.networkJob.started()
         job = scope.launch {
+            var drained = false
             try {
                 val graph = AppGraph.get(this@TransferJobService); graph.ready.await()
-                graph.operations.drain { task ->
-                    if (Build.VERSION.SDK_INT >= 34) setNotification(params, TransferScheduler.NOTIFICATION, TransferScheduler.notification(this@TransferJobService, task), JOB_END_NOTIFICATION_POLICY_REMOVE)
-                }
-            } finally { jobFinished(params, false) }
+                do {
+                    graph.operations.drain { task ->
+                        if (Build.VERSION.SDK_INT >= 34) setNotification(params, TransferScheduler.NOTIFICATION, TransferScheduler.notification(this@TransferJobService, task), JOB_END_NOTIFICATION_POLICY_REMOVE)
+                    }
+                } while (TransferScheduler.networkJob.drainAgain())
+                drained = true
+            } finally {
+                // Stopped or failed while a new task was waiting for this job: start a fresh job for it.
+                if (!drained && TransferScheduler.networkJob.ended()) runCatching { TransferScheduler.schedule(this@TransferJobService, true) }
+                jobFinished(params, false)
+            }
         }
         return true
     }

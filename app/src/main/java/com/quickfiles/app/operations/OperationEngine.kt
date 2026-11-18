@@ -3,6 +3,7 @@ package com.quickfiles.app.operations
 import com.quickfiles.app.data.*
 import com.quickfiles.app.storage.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -31,10 +32,11 @@ class OperationEngine(
     private val openChannel: (suspend (StorageProvider, FileEntry) -> SeekableByteChannel)? = null,
     private val recordError: (String, String, Throwable) -> Unit = DiagnosticLog::record,
 ) {
-    val changed = MutableSharedFlow<StorageLocation>(extraBufferCapacity = 64)
+    /** Folders whose contents changed. A flood drops the oldest events instead of the newest, so the final state is always announced. */
+    val changed = MutableSharedFlow<StorageLocation>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     private val lock = Mutex()
-    private var running: Job? = null
-    private var runningId: String? = null
+    /** The task being executed and its job, published together before the job starts so [pause] can always cancel it. */
+    @Volatile private var running: Pair<String, Job>? = null
 
     suspend fun enqueue(kind: String, sources: List<StorageLocation> = emptyList(), destination: StorageLocation? = null,
                         policy: ConflictPolicy = ConflictPolicy.SKIP, extra: JSONObject = JSONObject()): String {
@@ -96,9 +98,9 @@ class OperationEngine(
         val task = dao.task(id) ?: return
         if (task.state in setOf("COMPLETE", "CANCELLED")) return
         dao.task(task.copy(state = if (cancel) "CANCELLED" else "PAUSED", message = if (cancel) "취소됨 · 완료된 파일과 복구 가능한 임시 파일은 보존됩니다." else "일시정지됨"))
-        if (runningId == id) {
-            val active = running
-            active?.cancel(); active?.join()
+        val active = running
+        if (active != null && active.first == id) {
+            active.second.cancel(); active.second.join()
             dao.items(id).flatMap { listOf(it.source, it.destination) }.filter { it.isNotEmpty() }.mapNotNull { runCatching { decodeLocation(it).parent() }.getOrNull() }.distinct().forEach { changed.tryEmit(it) }
         }
     }
@@ -123,15 +125,16 @@ class OperationEngine(
             coroutineContext.ensureActive()
             val task = dao.nextTask() ?: break
             coroutineScope {
-                runningId = task.id
-                running = launch { execute(task, onProgress) }
-                running!!.join()
-                running = null; runningId = null
+                val job = launch(start = CoroutineStart.LAZY) { execute(task, onProgress) }
+                running = task.id to job
+                try { job.start(); job.join() } finally { running = null }
             }
         }
     }
 
     private suspend fun execute(original: FileTask, onProgress: (FileTask) -> Unit) {
+        // Paused or cancelled after it was picked but before it started: leave the user's choice in place.
+        if (dao.task(original.id)?.state != "QUEUED") return
         var task = original.copy(state = "RUNNING", message = "준비 중", failed = 0, updated = System.currentTimeMillis())
         dao.task(task); onProgress(task)
         try {
@@ -164,7 +167,9 @@ class OperationEngine(
                             // A batch rename carries one new name per source; a single rename carries just "name".
                             val name = data.optJSONObject("names")?.optString(target)?.takeIf { it.isNotEmpty() } ?: data.getString("name")
                             requireFileName(name)
-                            transfer(task.id, source, source.parent()!!.child(name), ConflictPolicy.SKIP, true, onProgress)
+                            val old = source.path.substringAfterLast('/')
+                            if (name != old && name.equals(old, ignoreCase = true)) renameCase(task.id, source, source.parent()!!.child(name))
+                            else transfer(task.id, source, source.parent()!!.child(name), ConflictPolicy.SKIP, true, onProgress)
                         }
                         "TRASH" -> { trash(decodeLocation(target), stableId(task.id, target)); true }
                         "RESTORE" -> { restore(target); true }
@@ -231,7 +236,11 @@ class OperationEngine(
 
     private suspend fun transfer(task: String, source: StorageLocation, requested: StorageLocation, policy: ConflictPolicy,
                                  moving: Boolean, onProgress: (FileTask) -> Unit): Boolean {
-        if (source == requested) return false
+        if (source == requested) {
+            // Moving onto itself changes nothing. A copy into its own folder needs a new name, which only RENAME gives.
+            if (moving) return false
+            if (policy != ConflictPolicy.RENAME) throw StorageException(StorageError.CONFLICT, "같은 위치에는 복사할 수 없습니다. 사본을 만들려면 ‘새 이름으로 보관’을 선택해 주세요.")
+        }
         val src = provider(source.sourceId)
         val dest = writer(requested.sourceId)
         val id = stableId(task, source.encode() + requested.encode())
@@ -285,7 +294,8 @@ class OperationEngine(
             val snapshot = children.associate { it.name to it.revision }
             var all = true
             // Copy first, then trash the complete original tree only if every child was verified.
-            for (child in children) if (!transfer(task, child.location, destination.child(child.name), policy, false, onProgress)) all = false
+            // A folder link inside the tree is not followed (it can loop or reach outside the folder), so the folder stays partial.
+            for (child in children) if (child.isLinkedDirectory || !transfer(task, child.location, destination.child(child.name), policy, false, onProgress)) all = false
             val after = src.list(source)
             if (after.size != snapshot.size || after.any { snapshot[it.name]?.matches(it.revision) != true }) throw StorageException(StorageError.CONFLICT, "원본 폴더 내용이 변경되었습니다. 원본을 보존했습니다.")
             if (moving && all) {
@@ -378,6 +388,43 @@ class OperationEngine(
             item = item.copy(phase = "SOURCE_TRASHED"); dao.item(item)
         }
         dao.item(item.copy(phase = "DONE")); changed.tryEmit(destination.parent()!!)
+        return true
+    }
+
+    /**
+     * Renames to a name differing only in letter case. Shared storage ignores case, so the new name "exists"
+     * already (it is the item itself); go through a journalled hidden name instead. A different item that really
+     * has the new name, on storage that keeps case apart, is left alone.
+     */
+    private suspend fun renameCase(task: String, source: StorageLocation, target: StorageLocation): Boolean {
+        val w = writer(source.sourceId)
+        val id = stableId(task, "case:" + source.encode() + target.encode())
+        val stage = source.parent()!!.child(".fileexplorer-$id.part")
+        var item = dao.item(id)
+        if (item?.phase == "DONE") return true
+        if (item == null) {
+            val entry = w.find(source) ?: throw StorageException(StorageError.NOT_FOUND, "원본을 찾을 수 없습니다.")
+            if (entry.isDirectory && journalledTrashInside(source)) throw StorageException(StorageError.BUSY, "폴더 안의 기존 휴지통을 복원하거나 비운 뒤 이름을 바꿔 주세요.")
+            if (w.list(source.parent()!!).any { it.name == target.path.substringAfterLast('/') }) return false
+            if (w.find(stage) != null) throw StorageException(StorageError.CONFLICT, "임시 이름이 이미 사용 중입니다. 기존 항목을 보존했습니다.")
+            item = TaskItem(id, task, source.encode(), target.encode(), stage.encode(), entry.revision.encode(), "TO_STAGE")
+            dao.item(item)
+            w.move(source, stage, entry.revision)
+            item = item.copy(phase = "STAGED"); dao.item(item)
+        } else if (item.phase == "TO_STAGE") {
+            // The first move may or may not have happened before the interruption.
+            if (w.find(stage) == null) {
+                val entry = w.find(source) ?: throw StorageException(StorageError.CONFLICT, "이전 이름 변경 결과를 확인해 주세요. 작업을 반복하지 않았습니다.")
+                if (!decodeRevision(item.revision).matches(entry.revision)) throw StorageException(StorageError.CONFLICT, "작업 시작 후 원본이 변경되었습니다.")
+                w.move(source, stage, entry.revision)
+            }
+            item = item.copy(phase = "STAGED"); dao.item(item)
+        }
+        val staged = w.find(stage)
+        if (staged == null) {
+            if (w.find(target) == null) throw StorageException(StorageError.CONFLICT, "이름 변경 중인 항목을 찾을 수 없습니다. 작업 기록을 확인해 주세요.")
+        } else w.move(stage, target, staged.revision)
+        dao.item(item.copy(phase = "DONE")); changed.tryEmit(source.parent()!!)
         return true
     }
 
@@ -498,7 +545,8 @@ class OperationEngine(
     private suspend fun deleteTree(w: WritableStorageProvider, location: StorageLocation) {
         coroutineContext.ensureActive()
         val entry = w.stat(location)
-        if (entry.isDirectory) for (child in w.list(location)) deleteTree(w, child.location)
+        // A link to a folder is deleted as a link; walking into it would delete the target's files.
+        if (entry.isDirectory && !entry.isLink) for (child in w.list(location)) deleteTree(w, child.location)
         w.delete(location, w.stat(location).revision)
     }
 
@@ -600,7 +648,8 @@ class OperationEngine(
                             if (!entry.revision.matches(p.stat(location).revision)) throw StorageException(StorageError.CONFLICT, "압축하는 동안 원본이 변경되었습니다.")
                         }
                         zip.closeArchiveEntry()
-                        if (entry.isDirectory) for (child in p.list(location).filterNot { isManagedName(it.name) }) add(child.location, "$name/${child.name}")
+                        // Folder links inside a selected folder are not followed, so a link back up the tree cannot loop.
+                        if (entry.isDirectory) for (child in p.list(location).filterNot { isManagedName(it.name) || it.isLinkedDirectory }) add(child.location, "$name/${child.name}")
                     }
                     for (source in sources) add(source, source.path.substringAfterLast('/'))
                     zip.finish()

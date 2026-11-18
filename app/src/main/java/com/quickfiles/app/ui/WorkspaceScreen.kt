@@ -155,11 +155,13 @@ internal fun TasksPanel(model: ExplorerViewModel) {
 internal fun TrashPanel(model: ExplorerViewModel) {
     val records by model.graph.dao.trashItems().collectAsStateWithLifecycle(emptyList())
     val items = records.filter { it.state != "RESTORED" }
-    var selected by remember { mutableStateOf(setOf<String>()) }
+    var chosen by remember { mutableStateOf(setOf<String>()) }
+    // Only rows still in the trash count, so a restored or purged item can never be queued again.
+    val selected = chosen intersect items.mapTo(HashSet()) { it.id }
     var purge by remember { mutableStateOf<List<String>?>(null) }
     Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        PillButton(if (selected.size == items.size && items.isNotEmpty()) "선택 해제" else "전체 선택", { selected = if (selected.size == items.size) emptySet() else items.map { it.id }.toSet() }, enabled = items.isNotEmpty())
-        PillButton(if (selected.isEmpty()) "복원" else "${selected.size}개 복원", { model.enqueue("RESTORE", emptyList(), null, extra = JSONObject().put("trashIds", JSONArray(selected.toList()))) }, enabled = selected.isNotEmpty(), primary = true, icon = Symbols.Refresh)
+        PillButton(if (selected.size == items.size && items.isNotEmpty()) "선택 해제" else "전체 선택", { chosen = if (selected.size == items.size) emptySet() else items.map { it.id }.toSet() }, enabled = items.isNotEmpty())
+        PillButton(if (selected.isEmpty()) "복원" else "${selected.size}개 복원", { model.enqueue("RESTORE", emptyList(), null, extra = JSONObject().put("trashIds", JSONArray(selected.toList()))); chosen = emptySet() }, enabled = selected.isNotEmpty(), primary = true, icon = Symbols.Refresh)
         PillButton("영구 삭제", { purge = selected.toList() }, enabled = selected.isNotEmpty())
         PillButton("비우기", { purge = items.map { it.id } }, enabled = items.isNotEmpty())
     }
@@ -167,7 +169,7 @@ internal fun TrashPanel(model: ExplorerViewModel) {
         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     else LazyColumn(Modifier.background(MaterialTheme.colorScheme.surfaceContainerLow, MaterialTheme.shapes.large), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) { items(items, key = { it.id }) { item ->
         val checked = item.id in selected
-        Row(Modifier.fillMaxWidth().toggleable(checked, role = Role.Checkbox, onValueChange = { selected = if (it) selected + item.id else selected - item.id }).heightIn(min = 60.dp).padding(vertical = 10.dp),
+        Row(Modifier.fillMaxWidth().toggleable(checked, role = Role.Checkbox, onValueChange = { chosen = if (it) selected + item.id else selected - item.id }).heightIn(min = 60.dp).padding(vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f)) {
                 Text(item.name, style = MaterialTheme.typography.bodyLarge)
@@ -181,7 +183,7 @@ internal fun TrashPanel(model: ExplorerViewModel) {
         }
         if (item != items.last()) GroupDivider()
     } }
-    purge?.let { ids -> AlertDialog(onDismissRequest = { purge = null }, title = { Text("${ids.size}개 영구 삭제") }, text = { Text("선택한 휴지통 항목을 영구 삭제합니다. 이 작업은 되돌릴 수 없습니다.") }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { model.enqueue("PURGE", emptyList(), null, extra = JSONObject().put("trashIds", JSONArray(ids))); purge = null; selected = emptySet() }) { Text("영구 삭제") } }, dismissButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { purge = null }) { Text("취소") } }) }
+    purge?.let { ids -> AlertDialog(onDismissRequest = { purge = null }, title = { Text("${ids.size}개 영구 삭제") }, text = { Text("선택한 휴지통 항목을 영구 삭제합니다. 이 작업은 되돌릴 수 없습니다.") }, confirmButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { model.enqueue("PURGE", emptyList(), null, extra = JSONObject().put("trashIds", JSONArray(ids))); purge = null; chosen = emptySet() }) { Text("영구 삭제") } }, dismissButton = { TextButton(shape = MaterialTheme.shapes.small, onClick = { purge = null }) { Text("취소") } }) }
 }
 
 @Composable
