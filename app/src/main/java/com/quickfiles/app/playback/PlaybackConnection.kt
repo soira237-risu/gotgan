@@ -88,7 +88,11 @@ class PlaybackConnection(private val context: Context) {
     fun seekBy(deltaMs: Long) {
         controller?.let { player ->
             val detail = details.value
-            if (detail.seekable) player.seekTo(seekTarget(player.currentPosition, deltaMs, detail.duration))
+            if (!detail.seekable) return
+            val position = player.currentPosition
+            val target = seekTarget(position, deltaMs, detail.duration)
+            // At the end guard a further +10s is a no-op, not a re-seek that rebuffers.
+            if (target != position) player.seekTo(target)
         }
     }
 

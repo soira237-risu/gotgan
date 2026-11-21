@@ -107,7 +107,9 @@ internal fun PlayerScreen(connection: PlaybackConnection, pip: Boolean, activity
     fun seek(delta: Long) {
         val connected = player ?: return
         if (!detail.seekable) { seekHint = "이 파일은 시간 이동을 지원하지 않습니다."; touchTick++; return }
-        commitSeek(seekTarget(connected.currentPosition, delta, detail.duration))
+        val position = connected.currentPosition
+        val target = seekTarget(position, delta, detail.duration)
+        if (target != position) commitSeek(target) else { controls = true }
         seekHint = if (delta < 0) "−10초" else "+10초"; touchTick++
     }
     // Music can be pulled down to reveal the folder underneath. Video keeps the opaque window

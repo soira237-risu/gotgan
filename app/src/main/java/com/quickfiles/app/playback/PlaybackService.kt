@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -71,7 +72,17 @@ class PlaybackService : MediaSessionService() {
 
         val openPlayer = PendingIntent.getActivity(this, 10, Intent(this, PlayerActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        session = MediaSession.Builder(this, player)
+        // The notification, lock screen and headset +10s buttons share the in-app rule:
+        // a relative seek stays inside the current file instead of finishing it.
+        val sessionPlayer = object : ForwardingPlayer(player) {
+            override fun seekForward() {
+                val length = duration
+                if (length == C.TIME_UNSET || !isCurrentMediaItemSeekable) return super.seekForward()
+                val target = seekTarget(currentPosition, seekForwardIncrement, length)
+                if (target != currentPosition) seekTo(target)
+            }
+        }
+        session = MediaSession.Builder(this, sessionPlayer)
             .setSessionActivity(openPlayer)
             .setMediaButtonPreferences(mediaButtons())
             .setCallback(sessionCallback)
