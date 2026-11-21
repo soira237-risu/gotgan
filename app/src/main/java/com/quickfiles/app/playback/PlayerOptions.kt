@@ -4,8 +4,21 @@ import androidx.media3.common.*
 import com.quickfiles.app.storage.FileEntry
 import kotlinx.coroutines.flow.MutableStateFlow
 
-internal fun seekTarget(position: Long, delta: Long, duration: Long): Long =
-    (position + delta).coerceIn(0L, duration.coerceAtLeast(0L))
+/**
+ * A relative seek never leaves the current item. Landing exactly on the duration ends the item,
+ * and a playlist then starts the next file (in PiP, at that file's aspect ratio), so forward
+ * seeks stop [SEEK_END_GUARD_MS] before the end and never move backwards. The item still
+ * advances when that remainder plays out.
+ */
+internal fun seekTarget(position: Long, delta: Long, duration: Long): Long {
+    val length = duration.coerceAtLeast(0L)
+    val target = (position + delta).coerceIn(0L, length)
+    if (delta <= 0) return target
+    val last = (length - SEEK_END_GUARD_MS).coerceAtLeast(0L)
+    return target.coerceAtMost(last).coerceAtLeast(position.coerceIn(0L, length))
+}
+
+internal const val SEEK_END_GUARD_MS = 1_000L
 
 internal fun displayAspect(width: Int, height: Int, pixelRatio: Float = 1f, rotation: Int = 0): Float? {
     if (width <= 0 || height <= 0 || !pixelRatio.isFinite() || pixelRatio <= 0f) return null

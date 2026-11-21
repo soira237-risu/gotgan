@@ -8,10 +8,17 @@ import org.junit.Test
 class PlayerOptionsTest {
     @Test fun seekStaysInCurrentItemAndSupportsShortVideos() {
         assertEquals(0, seekTarget(3000, -10000, 30000))
-        assertEquals(30000, seekTarget(26000, 10000, 30000))
         assertEquals(12000, seekTarget(2000, 10000, 30000))
-        assertEquals(4000, seekTarget(0, 10000, 4000))
+        // Reaching the duration would end the item and start the next file, so forward seeks
+        // stop one second short of the end (a repeated press there stays put).
+        assertEquals(29000, seekTarget(26000, 10000, 30000))
+        assertEquals(29000, seekTarget(29000, 10000, 30000))
+        assertEquals(29500, seekTarget(29500, 10000, 30000))
+        assertEquals(20000, seekTarget(10000, 10000, 30000))
+        assertEquals(3000, seekTarget(0, 10000, 4000))
+        assertEquals(0, seekTarget(0, 10000, 800))
         assertEquals(0, seekTarget(0, 10000, -1))
+        assertEquals(19500, seekTarget(29500, -10000, 30000))
     }
     @Test fun orientationUsesDisplayedPixelsAndOnlyUnappliedRotation() {
         assertNull(displayAspect(0, 1080))
