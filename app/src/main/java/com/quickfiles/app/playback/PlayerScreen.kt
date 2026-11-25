@@ -57,6 +57,8 @@ internal fun PlayerScreen(connection: PlaybackConnection, pip: Boolean, activity
     val identity = detail.mediaId to session.sessionId
     var seeking by remember(identity) { mutableStateOf(false) }
     var preview by remember(identity) { mutableStateOf<SeekPreview?>(null) }
+    val clock = remember(identity) { PlaybackClock(player?.currentPosition ?: 0) }
+    LaunchedEffect(player, identity) { while (true) { player?.let { clock.sample(it.currentPosition) }; delay(250) } }
     var seekHint by remember { mutableStateOf("") }
     var audioOnlyLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -102,6 +104,7 @@ internal fun PlayerScreen(connection: PlaybackConnection, pip: Boolean, activity
         preview = null
         // seekTo leaves playWhenReady untouched: a paused drag must never start playback.
         connected.seekTo(clamped)
+        clock.committed(clamped)
         controls = true; touchTick++
     }
     fun seek(delta: Long) {
@@ -189,7 +192,7 @@ internal fun PlayerScreen(connection: PlaybackConnection, pip: Boolean, activity
                         .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
                         .padding(horizontal = 16.dp).testTag("player-footer")) {
                         key(identity) {
-                            PlayerTimeline(player, detail, preview,
+                            PlayerTimeline(clock.position, detail, preview,
                                 onStart = { touchTick++ }, onCommit = { commitSeek(it) }, onSeeking = { seeking = it })
                         }
                         if (!detail.seekable && detail.duration > 0) Text("이 파일은 시간 이동을 지원하지 않습니다.", color = PlayerIvory, style = MaterialTheme.typography.bodySmall)
