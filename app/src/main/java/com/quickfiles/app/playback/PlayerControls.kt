@@ -19,8 +19,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.media3.common.Player
-import kotlinx.coroutines.delay
 
 internal val PlayerIvory = Color(0xFFFAF9F5)
 internal val PlayerApricot = Color(0xFFF0A889)
@@ -82,14 +80,12 @@ internal fun PlayerSeekHint(preview: SeekPreview, modifier: Modifier = Modifier)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun PlayerTimeline(player: Player?, detail: PlaybackDetails, preview: SeekPreview?,
+internal fun PlayerTimeline(position: Long, detail: PlaybackDetails, preview: SeekPreview?,
     onStart: () -> Unit, onCommit: (Long) -> Unit, onSeeking: (Boolean) -> Unit) {
-    var position by remember(detail.mediaId) { mutableLongStateOf(0) }
     var dragging by remember(detail.mediaId) { mutableStateOf<Float?>(null) }
     val endSeeking by rememberUpdatedState(onSeeking)
     DisposableEffect(detail.mediaId) { onDispose { endSeeking(false) } }
-    LaunchedEffect(player, detail.mediaId) { while (true) { position = player?.currentPosition?.coerceAtLeast(0) ?: 0; delay(250) } }
-    val shown = preview?.target ?: dragging?.toLong() ?: position
+    val shown = timelinePosition(preview, dragging, position)
     val timeline: @Composable (Modifier) -> Unit = { modifier ->
         Slider(value = shown.toFloat().coerceIn(0f, detail.duration.coerceAtLeast(1).toFloat()),
             valueRange = 0f..detail.duration.coerceAtLeast(1).toFloat(), enabled = detail.seekable && preview == null,
@@ -98,7 +94,7 @@ internal fun PlayerTimeline(player: Player?, detail: PlaybackDetails, preview: S
                 dragging = it; onSeeking(true)
             },
             onValueChangeFinished = {
-                dragging?.let { onCommit(it.toLong()); position = it.toLong() }
+                dragging?.let { onCommit(it.toLong()) }
                 dragging = null; onSeeking(false)
             },
             thumb = { Box(Modifier.size(if (dragging != null) 16.dp else 14.dp).background(if (detail.seekable) Color.White else Color.Gray, CircleShape)) },

@@ -87,6 +87,36 @@ class PlayerSeekDeviceTest {
         capture("fine-seek-committed")
         assertTrue("Committed position stays at the preview target", position() in 33_000..36_000)
     }
+    @Test fun timelineNeverFallsBackToAStalePositionAfterSeekingOrShowingControls() {
+        fun text(tag: String) = compose.onNodeWithTag(tag).fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsProperties.Text].single().text
+        val origin = text("player-position")
+        // Frames are advanced by hand so the 250 ms position sampling cannot hide a stale frame.
+        compose.mainClock.autoAdvance = false
+        try {
+            surface().performTouchInput { down(Offset(width * .25f, height * .24f)); moveTo(Offset(width * .45f, height * .24f), 300) }
+            compose.mainClock.advanceTimeByFrame()
+            val target = text("player-seek-target")
+            assertNotEquals(origin, target)
+            surface().performTouchInput { up() }
+            compose.mainClock.advanceTimeByFrame()
+            compose.onNodeWithTag("player-seek-preview").assertDoesNotExist()
+            assertEquals("Released drag must not snap back to the origin", target, text("player-position"))
+            compose.onNodeWithTag("player-seek-forward").performClick()
+            compose.mainClock.advanceTimeByFrame()
+            assertEquals("+10s moves the timeline in the same frame", com.quickfiles.app.playback.clockText(position()), text("player-position"))
+            // Hide the controls, then show them again: the timeline must appear at the real position, not 0:00.
+            surface().performTouchInput { click(Offset(width * .25f, height * .24f)) }
+            compose.mainClock.advanceTimeUntil(3_000) { compose.onAllNodesWithTag("player-footer").fetchSemanticsNodes().isEmpty() }
+            compose.mainClock.advanceTimeBy(500)
+            surface().performTouchInput { click(Offset(width * .25f, height * .24f)) }
+            compose.mainClock.advanceTimeUntil(3_000) { compose.onAllNodesWithTag("player-position").fetchSemanticsNodes().isNotEmpty() }
+            assertEquals("Shown controls start at the playback position", com.quickfiles.app.playback.clockText(position()), text("player-position"))
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+        assertFalse(main { graph.playback.controller!!.playWhenReady })
+    }
     @Test fun cancelledVerticalAndMultitouchGesturesAndLockDoNotSeek() {
         val origin = position()
         surface().performTouchInput { swipe(Offset(width * .25f, height * .24f), Offset(width * .26f, height * .45f), 400) }
