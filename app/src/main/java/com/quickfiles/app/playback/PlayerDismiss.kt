@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -44,28 +45,44 @@ internal fun shouldDismissPlayer(offsetPx: Float, velocityY: Float, heightPx: Fl
     return offsetPx >= heightPx * .25f
 }
 
+/** The top edge belongs to the status bar and notification shade; a pull must start below it. */
+internal fun dismissStartAllowed(y: Float, topExclusionPx: Float): Boolean = y.isFinite() && y >= topExclusionPx.coerceAtLeast(0f)
+
+/** How far a minimizing video has shrunk: full size at rest, [MINIMIZED_SCALE] once pulled the whole height. */
+internal fun minimizeScale(offsetPx: Float, heightPx: Float): Float {
+    if (!heightPx.isFinite() || heightPx <= 0f || !offsetPx.isFinite() || offsetPx <= 0f) return 1f
+    val progress = (offsetPx / heightPx).coerceIn(0f, 1f)
+    return 1f - (1f - MINIMIZED_SCALE) * progress
+}
+
+internal const val MINIMIZED_SCALE = .55f
+
 /**
- * Lets the music player be pulled down with the finger. The player window is translucent while
- * this is enabled, so the travelled area reveals the browser task underneath, under a scrim that
- * clears as the player leaves. Releasing past the threshold slides the player out and calls
- * [onDismiss]; otherwise it springs back.
+ * Lets the player be pulled down with the finger. For music the player window is translucent, so
+ * the travelled area reveals the browser task underneath, under a scrim that clears as the player
+ * leaves. Video keeps its opaque window (its orientation requests need one), so with [shrink] the
+ * picture instead shrinks toward the bottom like a card being put away while playback carries on.
+ * Releasing past the threshold slides the player out and calls [onDismiss]; otherwise it springs back.
+ * Pulls starting inside [topExclusionPx] are left to the system's status bar gesture.
  */
 @Composable
-internal fun PlayerDismissFrame(enabled: Boolean, onDismiss: () -> Unit, content: @Composable BoxScope.() -> Unit) {
+internal fun PlayerDismissFrame(enabled: Boolean, onDismiss: () -> Unit, shrink: Boolean = false, topExclusionPx: Float = 0f,
+    content: @Composable BoxScope.() -> Unit) {
     val offset = remember { Animatable(0f) }
     val dismiss by rememberUpdatedState(onDismiss)
     var leaving by remember { mutableStateOf(false) }
     // Setting leaving restarts the gesture block, so the exit must not run in its scope.
     val exitScope = rememberCoroutineScope()
     LaunchedEffect(enabled) { if (!enabled && !leaving) offset.snapTo(0f) }
-    Box(Modifier.fillMaxSize().testTag("player-dismiss-frame").pointerInput(enabled && !leaving) {
+    val currentShrink by rememberUpdatedState(shrink)
+    Box(Modifier.fillMaxSize().testTag("player-dismiss-frame").pointerInput(enabled && !leaving, topExclusionPx) {
         if (!enabled || leaving) return@pointerInput
         val flingVelocity = 1200.dp.toPx()
         coroutineScope {
             awaitEachGesture {
                 val first = awaitFirstDown(requireUnconsumed = false)
                 // Buttons and the timeline consume their press; a swipe must start on the stage.
-                if (first.isConsumed) return@awaitEachGesture
+                if (first.isConsumed || !dismissStartAllowed(first.position.y, topExclusionPx)) return@awaitEachGesture
                 val tracker = VelocityTracker().apply { addPointerInputChange(first) }
                 val base = offset.value
                 var current = base
@@ -109,12 +126,22 @@ internal fun PlayerDismissFrame(enabled: Boolean, onDismiss: () -> Unit, content
             }
         }
     }) {
+        // An opaque video window has nothing underneath to reveal; keep what the card uncovers black.
+        if (shrink) Box(Modifier.fillMaxSize().background(Color.Black))
         Box(Modifier.fillMaxSize().graphicsLayer {
             alpha = if (offset.value > 0f && size.height > 0f) .45f * (1f - offset.value / size.height).coerceIn(0f, 1f) else 0f
         }.background(Color.Black))
         Box(Modifier.fillMaxSize().graphicsLayer {
             translationY = offset.value
-            if (offset.value > 0f) { shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp); clip = true }
+            if (currentShrink) {
+                // The top edge follows the finger while the picture narrows around the centre line.
+                // SurfaceView follows the layer's translation and scale (API 29+), so the video shrinks with it.
+                transformOrigin = TransformOrigin(.5f, 0f)
+                scaleX = minimizeScale(offset.value, size.height); scaleY = scaleX
+            }
+            if (offset.value > 0f) {
+                shape = if (currentShrink) RoundedCornerShape(20.dp) else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp); clip = true
+            }
         }.background(Color.Black), content = content)
     }
 }

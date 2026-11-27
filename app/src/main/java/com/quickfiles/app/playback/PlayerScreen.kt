@@ -42,7 +42,7 @@ import kotlinx.coroutines.launch
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-internal fun PlayerScreen(connection: PlaybackConnection, pip: Boolean, activity: Activity, outputEnabled: Boolean, revealable: Boolean,
+internal fun PlayerScreen(connection: PlaybackConnection, pip: Boolean, activity: Activity, outputEnabled: Boolean, revealable: Boolean, minimizable: Boolean,
     onBack: () -> Unit, onDismiss: () -> Unit, onPip: () -> Unit, onRotate: () -> Unit, onStop: () -> Unit, onView: (PlayerView) -> Unit) {
     var player by remember { mutableStateOf(connection.controller) }
     LaunchedEffect(connection) { player = connection.connect() }
@@ -111,8 +111,11 @@ internal fun PlayerScreen(connection: PlaybackConnection, pip: Boolean, activity
         seekHint = if (delta < 0) "−10초" else "+10초"; touchTick++
     }
     // Music can be pulled down to reveal the folder underneath. Video keeps the opaque window
-    // its orientation requests need, and a locked or busy screen must not move.
-    PlayerDismissFrame(revealable && !state.video && !pip && !locked && menu == null, onDismiss) {
+    // its orientation requests need, so it shrinks away instead while playback continues in the
+    // mini player. A locked or busy screen must not move, and split screen keeps its own window.
+    val dismissTopPx = maxOf(gestureInsets.getTop(density).toFloat(), with(density) { 32.dp.toPx() })
+    PlayerDismissFrame(!pip && !locked && menu == null && (if (state.video) minimizable else revealable), onDismiss,
+        shrink = state.video, topExclusionPx = dismissTopPx) {
         AndroidView(factory = { PlayerView(it).apply {
             useController = false; setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
             setBackgroundColor(android.graphics.Color.BLACK); setShutterBackgroundColor(android.graphics.Color.BLACK)
