@@ -205,8 +205,10 @@ class PlayerActivity : ComponentActivity() {
                 setPictureInPictureParams(buildPipParams())
             }
             GotganTheme(darkOverride = true, manageSystemBars = false) {
-                PlayerScreen(graph.playback, pip, this, outputVisible, revealable, onBack = ::returnToBrowser,
-                    onDismiss = { returnToBrowser(animated = false) }, onPip = ::enterPip,
+                PlayerScreen(graph.playback, pip, this, outputVisible, revealable, minimizable = !pip && !multiWindow, onBack = ::returnToBrowser,
+                    // Music has already uncovered the browser while it slid away; an opaque video
+                    // window has not, so the browser fades in under the minimized player.
+                    onDismiss = { returnToBrowser(animated = !revealable) }, onPip = ::enterPip,
                     onRotate = { manualPortrait = resources.configuration.orientation != Configuration.ORIENTATION_PORTRAIT },
                     onStop = { lifecycleScope.launch { graph.playback.stop(); returnToBrowser() } },
                     onView = { output ->

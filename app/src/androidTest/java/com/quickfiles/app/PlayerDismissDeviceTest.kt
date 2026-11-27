@@ -15,8 +15,8 @@ import org.junit.Test
 class PlayerDismissDeviceTest {
     @get:Rule val rule = createComposeRule()
     private var dismissed = 0
-    private fun show(enabled: Boolean = true) = rule.setContent {
-        Box(Modifier.size(400.dp, 800.dp)) { PlayerDismissFrame(enabled, { dismissed++ }) { } }
+    private fun show(enabled: Boolean = true, shrink: Boolean = false, topExclusionPx: Float = 0f) = rule.setContent {
+        Box(Modifier.size(400.dp, 800.dp)) { PlayerDismissFrame(enabled, { dismissed++ }, shrink = shrink, topExclusionPx = topExclusionPx) { } }
     }
     private fun swipe(fromY: Float, toY: Float, dx: Float = 0f, millis: Long) {
         rule.onNodeWithTag("player-dismiss-frame").performTouchInput {
@@ -31,4 +31,12 @@ class PlayerDismissDeviceTest {
     @Test fun horizontalSwipeIsLeftForSeeking() { show(); swipe(.1f, .15f, dx = .75f, millis = 300); assertEquals(0, dismissed) }
     @Test fun upwardSwipeDoesNothing() { show(); swipe(.9f, .1f, millis = 300); assertEquals(0, dismissed) }
     @Test fun disabledFrameIgnoresSwipes() { show(enabled = false); swipe(.1f, .7f, millis = 100); assertEquals(0, dismissed) }
+    @Test fun videoShrinksAwayWithTheSameSwipe() { show(shrink = true); swipe(.1f, .7f, millis = 600); assertEquals(1, dismissed) }
+    @Test fun videoShortSwipeSpringsBack() { show(shrink = true); swipe(.1f, .2f, millis = 800); assertEquals(0, dismissed) }
+    @Test fun pullFromTheTopEdgeIsLeftToTheSystem() {
+        show(topExclusionPx = 200f); swipe(.02f, .7f, millis = 600); assertEquals(0, dismissed)
+    }
+    @Test fun pullBelowTheTopEdgeStillDismisses() {
+        show(topExclusionPx = 20f); swipe(.1f, .7f, millis = 600); assertEquals(1, dismissed)
+    }
 }
